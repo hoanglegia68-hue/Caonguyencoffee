@@ -25,30 +25,49 @@ Nếu không thiết lập URL, giao diện vẫn chạy với trạng thái r�
 4. Đặt timezone dự án là `Asia/Ho_Chi_Minh`.
 5. Chạy hàm `initializeSchema` một lần để tạo các tab và hàng tiêu đề. Hàm này không tạo dữ liệu mẫu.
 6. Cấp quyền cho Google Sheets và thư mục Google Drive.
-7. Deploy → New deployment → Web app, chọn **Execute as me**. Quyền truy cập cần phù hợp với tài khoản công ty.
+7. Deploy → New deployment → Web app, chọn **Execute as me** và **Who has access: Anyone** để proxy Vercel gọi được API. Sao chép URL kết thúc bằng `/exec`, không dùng URL `/dev`.
+
+### Tạo tài khoản đăng nhập trong tab `USERS`
+
+Sau khi chạy `initializeSchema`, nhập một dòng cho mỗi người dùng. Các cột chính:
+
+```text
+user_id | username | password | password_hash | email | full_name | role | phone | active
+```
+
+Ví dụ:
+
+```text
+U001 | admin | matkhau-admin | | admin@caonguyen.vn | Quản trị hệ thống | admin | | TRUE
+U002 | sales01 | matkhau-sales | | sales01@caonguyen.vn | Nguyễn Văn A | sales | | TRUE
+U003 | ketoan01 | matkhau-ketoan | | ketoan@caonguyen.vn | Kế toán | accountant | | TRUE
+```
+
+`role` nhận `admin`, `sales` hoặc `accountant`/`kế toán`. Tài khoản Sales chỉ thấy dữ liệu quán, đơn hàng, KPI và tuyến của chính mình. Tài khoản Kế toán chỉ thấy Menu Thanh toán. Không gửi mật khẩu lên GitHub; chỉ người quản trị được quyền xem tab `USERS`.
 
 ## 3. Thiết lập Vercel
 
-Tạo biến môi trường:
+Tạo biến môi trường Production:
 
 ```env
 APPS_SCRIPT_URL=https://script.google.com/macros/s/DEPLOYMENT_ID/exec
 ```
 
-Sau đó deploy thư mục này lên Vercel. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển request đến Apps Script; vì vậy URL Apps Script không cần đưa vào bundle trình duyệt.
+Sau đó redeploy. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển request đến Apps Script; vì vậy URL Apps Script không cần đưa vào bundle trình duyệt.
 
 ## 4. Quyền và dữ liệu
 
-- Đưa email nhân viên vào tab `USERS` để kiểm soát quyền.
+- Đăng nhập dùng `username` hoặc `email` và `password` trong tab `USERS`.
 - Các tab nghiệp vụ gồm `SHOPS`, `VISITS`, `ORDERS`, `PAYMENTS`, `KPI_DEFINITIONS`, `KPI_TARGETS`, `KPI_RECORDS`.
 - KPI có thể tạo mới và giao cho từng Sales theo chu kỳ ngày/tuần/tháng, với phép tính `SUM`, `COUNT`, `AVG`, `DISTINCT_COUNT` hoặc `MANUAL`.
-- Hình ảnh visit được lưu trong thư mục Drive gốc theo thư mục con `[MA_QUAN]_[TEN_QUAN]`.
-- Tên ảnh theo dạng `[MA_QUAN]_[TEN_QUAN_KHONG_DAU]_[YYYYMMDD]_[HHmm]_Visit.jpg`.
+- Ảnh quán được lưu trong thư mục Drive gốc theo thư mục con `[MA_QUAN]_[TEN_QUAN]`; Menu Danh sách quán hiển thị biểu tượng ảnh sau khi lưu.
+- GPS được lấy tại Menu Danh sách quán và khóa sau khi lưu. Admin có nút **Cấp sửa GPS**; quyền chỉ dùng được cho một lần cập nhật rồi tự khóa lại.
+- Menu Đi tuyến chỉ có check-in. Check-in hợp lệ khi khoảng cách tới GPS quán không quá 50 m và được dùng để tính KPI tuyến.
 - Các thông tin nhạy cảm không được đặt trong frontend hoặc commit vào Git.
 
 ## 5. Phân quyền an toàn
 
-Sau khi có người dùng trong `USERS`, Apps Script kiểm tra email tài khoản đang gọi API và vai trò `Admin`, `Sales` hoặc `Accountant`. Vì vậy không nên deploy API ở chế độ công khai rồi bỏ qua xác thực. Với công ty dùng Google Workspace, ưu tiên deploy Web App cho người dùng trong domain và cấu hình frontend gọi trực tiếp bằng `VITE_APPS_SCRIPT_URL` để Apps Script nhận diện `Session.getActiveUser()`.
+Apps Script cấp token phiên sau khi đăng nhập và kiểm tra quyền ở backend; frontend chỉ ẩn menu, không phải lớp bảo mật duy nhất. Nếu thay đổi mã Apps Script, phải cập nhật deployment Web App và giữ URL `/exec` trong biến bí mật `APPS_SCRIPT_URL` trên Vercel.
 
 ## 6. Kiểm tra
 

@@ -11,9 +11,9 @@ const APP = {
   driveRootFolderId: '1xJsrPnZNltFQs4djPO-SM7_FrwoSxu8r',
   timeZone: 'Asia/Ho_Chi_Minh',
   sheets: {
-    USERS: ['user_id', 'email', 'full_name', 'role', 'phone', 'active'],
-    SHOPS: ['shop_id', 'shop_name', 'address', 'latitude', 'longitude', 'phone', 'contact_name', 'current_supplier', 'salesperson_id', 'status', 'notes', 'created_at', 'updated_at'],
-    VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'created_at'],
+    USERS: ['user_id', 'username', 'password', 'password_hash', 'email', 'full_name', 'role', 'phone', 'active'],
+    SHOPS: ['shop_id', 'shop_name', 'address', 'latitude', 'longitude', 'phone', 'contact_name', 'current_supplier', 'salesperson_id', 'status', 'notes', 'created_at', 'updated_at', 'gps_locked', 'gps_edit_granted', 'photo_file_id', 'photo_url'],
+    VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'checkin_latitude', 'checkin_longitude', 'distance_meters', 'checkin_verified', 'created_at'],
     ORDERS: ['order_id', 'shop_id', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status', 'notes', 'created_at'],
     PAYMENTS: ['payment_id', 'order_id', 'shop_id', 'accountant_id', 'paid_date', 'amount', 'payment_method', 'status', 'notes'],
     KPI_DEFINITIONS: ['kpi_id', 'kpi_code', 'kpi_name', 'description', 'unit', 'data_source', 'calculation_type', 'active'],
@@ -25,24 +25,24 @@ const APP = {
 };
 
 function doGet(e) {
-  try {
-    const action = (e && e.parameter && e.parameter.action) || 'getConfig';
-    return jsonResponse({ success: true, data: route_(action, e.parameter || {}) });
-  } catch (error) {
-    logError_('GET', error);
-    return jsonResponse({ success: false, error: safeMessage_(error) });
-  }
+  const payload = Object.assign({}, e && e.parameter ? e.parameter : {}, { action: (e && e.parameter && e.parameter.action) || 'getConfig' });
+  return handleRequest_(payload);
 }
 
 function doPost(e) {
+  return handleRequest_(parseBody_(e));
+}
+
+function handleRequest_(payload) {
   try {
-    const payload = parseBody_(e);
-    const action = payload.action;
+    const action = String(payload && payload.action || '');
     if (!action) throw new Error('Thiếu action trong request.');
-    const result = route_(action, payload);
-    return jsonResponse({ success: true, data: result });
+    ensureSchema_();
+    const user = authorize_(action, payload);
+    const scopedPayload = scopePayload_(payload, user);
+    return jsonResponse({ success: true, data: route_(action, scopedPayload, user) });
   } catch (error) {
-    logError_('POST', error);
+    logError_(payload && payload.action ? payload.action : 'REQUEST', error);
     return jsonResponse({ success: false, error: safeMessage_(error) });
   }
 }
@@ -53,25 +53,28 @@ function initializeSchema() {
   return initializeSchema_();
 }
 
-function route_(action, payload) {
-  ensureSchema_();
-  authorize_(action, payload);
+function route_(action, payload, user) {
   switch (action) {
+    case 'login': return login_(payload);
+    case 'logout': return logout_(payload);
     case 'initializeSchema': return initializeSchema_();
     case 'getConfig': return getConfig_();
-    case 'getUsers': return listRows_('USERS', payload);
+    case 'getUsers': return getUsers_(user);
     case 'getShops': return getShops_(payload);
     case 'getShopDetail': return getShopDetail_(payload);
-    case 'createShop': return createShop_(payload);
-    case 'updateShop': return updateRow_('SHOPS', payload, 'shop_id');
-    case 'createVisit': return createVisit_(payload);
-    case 'uploadVisitPhoto': return uploadVisitPhoto_(payload);
+    case 'createShop': return createShop_(payload, user);
+    case 'updateShop': return updateShop_(payload, user);
+    case 'grantGpsEdit': return grantGpsEdit_(payload);
+    case 'uploadShopPhoto': return uploadShopPhoto_(payload, user);
+    case 'checkIn': return checkIn_(payload, user);
+    case 'createVisit': return createVisit_(payload, user);
+    case 'uploadVisitPhoto': return uploadVisitPhoto_(payload, user);
     case 'getOrders': return getOrders_(payload);
-    case 'createOrder': return createOrder_(payload);
-    case 'updateOrder': return updateRow_('ORDERS', payload, 'order_id');
+    case 'createOrder': return createOrder_(payload, user);
+    case 'updateOrder': return updateOrder_(payload, user);
     case 'confirmPayment': return confirmPayment_(payload);
     case 'getKpis': return listRows_('KPI_DEFINITIONS', payload);
-    case 'getKpiTargets': return listRows_('KPI_TARGETS', payload);
+    case 'getKpiTargets': return getKpiTargets_(payload);
     case 'createKpi': return createKpi_(payload);
     case 'createKpiTarget': return createKpiTarget_(payload);
     case 'updateKpi': return updateRow_('KPI_DEFINITIONS', payload, 'kpi_id');
@@ -84,22 +87,73 @@ function route_(action, payload) {
 }
 
 function authorize_(action, payload) {
-  const bootstrapActions = ['initializeSchema', 'getConfig'];
-  if (bootstrapActions.indexOf(action) >= 0) return { role: 'Admin', email: '' };
-  const users = getRows_('USERS');
-  if (!users.length) return { role: 'Admin', email: '' };
-  const sessionEmail = String((payload && payload.user_email) || Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-  if (!sessionEmail) throw new Error('Không xác định được tài khoản. Hãy triển khai Apps Script trong Google Workspace hoặc gửi user_email từ lớp đăng nhập đã xác thực.');
-  const user = users.filter(function(row) { return String(row.email || '').trim().toLowerCase() === sessionEmail && String(row.active) !== 'false'; })[0];
-  if (!user) throw new Error('Tài khoản chưa được cấp quyền trong sheet USERS.');
-  const role = String(user.role || '').toLowerCase();
-  const adminActions = ['createShop', 'updateShop', 'createKpi', 'createKpiTarget', 'updateKpi', 'updateKpiTarget', 'getUsers', 'getConfig'];
-  const accountantActions = ['confirmPayment'];
-  const salesActions = ['createVisit', 'uploadVisitPhoto', 'createOrder', 'updateOrder'];
-  if (adminActions.indexOf(action) >= 0 && role !== 'admin') throw new Error('Chỉ Admin được thực hiện thao tác này.');
-  if (accountantActions.indexOf(action) >= 0 && role !== 'admin' && role !== 'accountant' && role !== 'kế toán') throw new Error('Chỉ Kế toán hoặc Admin được xác nhận thanh toán.');
-  if (salesActions.indexOf(action) >= 0 && role !== 'admin' && role !== 'sales') throw new Error('Chỉ Sales hoặc Admin được thực hiện thao tác này.');
+  if (action === 'login' || action === 'initializeSchema') return { role: 'admin', email: '' };
+  if (action === 'logout') return getSessionUser_(payload.session_token) || { role: 'admin', email: '' };
+  if (action === 'getConfig') return getSessionUser_(payload.session_token) || { role: 'admin', email: '' };
+  const user = getSessionUser_(payload && payload.session_token);
+  if (!user) throw new Error('Phiên đăng nhập không hợp lệ hoặc đã hết hạn.');
+  const role = role_(user);
+  const permissions = {
+    getDashboard: ['admin', 'sales'], getShops: ['admin', 'sales'], getShopDetail: ['admin', 'sales'],
+    getOrders: ['admin', 'sales', 'accountant', 'kế toán'], getKpis: ['admin', 'sales'],
+    getKpiTargets: ['admin', 'sales'], getReports: ['admin', 'sales'], exportReportXlsx: ['admin', 'sales'],
+    getUsers: ['admin', 'sales'], createShop: ['admin', 'sales'], updateShop: ['admin', 'sales'],
+    grantGpsEdit: ['admin'], uploadShopPhoto: ['admin', 'sales'], checkIn: ['admin', 'sales'],
+    createVisit: ['admin', 'sales'], uploadVisitPhoto: ['admin', 'sales'], createOrder: ['admin', 'sales'],
+    updateOrder: ['admin', 'sales'], confirmPayment: ['admin', 'accountant', 'kế toán'],
+    createKpi: ['admin'], createKpiTarget: ['admin'], updateKpi: ['admin'], updateKpiTarget: ['admin']
+  };
+  if (permissions[action] && permissions[action].indexOf(role) < 0) {
+    if (role === 'accountant' || role === 'kế toán') throw new Error('Tài khoản Kế toán chỉ được sử dụng Menu Thanh toán.');
+    throw new Error('Tài khoản không có quyền thực hiện thao tác này.');
+  }
   return user;
+}
+
+function login_(payload) {
+  const username = String(payload.username || '').trim().toLowerCase();
+  const password = String(payload.password || '');
+  if (!username || !password) throw new Error('Vui lòng nhập tên đăng nhập và mật khẩu.');
+  const user = getRows_('USERS').filter(function(row) {
+    const login = String(row.username || row.email || '').trim().toLowerCase();
+    return login === username && String(row.active) !== 'false';
+  })[0];
+  if (!user) throw new Error('Tên đăng nhập không tồn tại hoặc tài khoản đã bị khóa.');
+  const plainMatch = String(user.password || '') === password;
+  const hashMatch = String(user.password_hash || '') && String(user.password_hash) === hashPassword_(password, user.username || user.email);
+  if (!plainMatch && !hashMatch) throw new Error('Mật khẩu không đúng.');
+  const safeUser = sanitizeUser_(user);
+  const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 12);
+  CacheService.getScriptCache().put('SESSION_' + token, JSON.stringify(safeUser), 21600);
+  return { token: token, user: safeUser };
+}
+
+function logout_(payload) {
+  if (payload && payload.session_token) CacheService.getScriptCache().remove('SESSION_' + payload.session_token);
+  return { logged_out: true };
+}
+
+function getSessionUser_(token) {
+  if (!token) return null;
+  const raw = CacheService.getScriptCache().get('SESSION_' + String(token));
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (_) { return null; }
+}
+
+function sanitizeUser_(user) {
+  return { user_id: user.user_id, username: user.username || user.email, email: user.email || '', full_name: user.full_name || user.username || user.email, role: user.role || 'sales', phone: user.phone || '', active: user.active !== 'false' };
+}
+
+function role_(user) { return String(user && user.role || '').trim().toLowerCase(); }
+
+function scopePayload_(payload, user) {
+  const scoped = Object.assign({}, payload || {});
+  if (user && role_(user) === 'sales') {
+    scoped.salespersonId = user.user_id;
+    scoped.salesperson_id = user.user_id;
+    scoped.user_id = user.user_id;
+  }
+  return scoped;
 }
 
 function initializeSchema_() {
@@ -120,9 +174,9 @@ function initializeSchema_() {
 
 function ensureSchema_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('SCHEMA_READY') === '1') return;
+  if (cache.get('SCHEMA_READY_V2') === '1') return;
   initializeSchema_();
-  cache.put('SCHEMA_READY', '1', 21600);
+  cache.put('SCHEMA_READY_V2', '1', 21600);
 }
 
 function getConfig_() {
@@ -130,6 +184,11 @@ function getConfig_() {
   const config = { spreadsheetId: APP.spreadsheetId, driveRootFolderId: APP.driveRootFolderId, timeZone: APP.timeZone };
   rows.forEach(function(row) { if (row.config_key) config[row.config_key] = row.config_value; });
   return config;
+}
+
+function getUsers_(user) {
+  const users = getRows_('USERS').map(sanitizeUser_);
+  return user && role_(user) === 'sales' ? users.filter(function(row) { return row.user_id === user.user_id; }) : users;
 }
 
 function getShops_(payload) {
@@ -156,13 +215,18 @@ function getShops_(payload) {
 function getShopDetail_(payload) {
   const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
   if (!shop) throw new Error('Không tìm thấy quán.');
+  if (payload.salespersonId && shop.salesperson_id !== payload.salespersonId) throw new Error('Bạn không có quyền xem quán này.');
   return { shop: shop, visits: getRows_('VISITS').filter(function(row) { return row.shop_id === payload.shop_id; }), orders: getRows_('ORDERS').filter(function(row) { return row.shop_id === payload.shop_id; }), payments: getRows_('PAYMENTS').filter(function(row) { return row.shop_id === payload.shop_id; }) };
 }
 
-function createShop_(payload) {
+function createShop_(payload, user) {
   const row = normalize_(payload, APP.sheets.SHOPS);
+  if (!row.latitude || !row.longitude) throw new Error('Hãy lấy GPS quán trước khi lưu hồ sơ.');
+  if (user && role_(user) === 'sales') row.salesperson_id = user.user_id;
   row.shop_id = row.shop_id || id_('SHOP');
   row.status = row.status || 'Đang hoạt động';
+  row.gps_locked = true;
+  row.gps_edit_granted = false;
   row.created_at = now_();
   row.updated_at = now_();
   appendRow_('SHOPS', row);
@@ -170,22 +234,75 @@ function createShop_(payload) {
   return row;
 }
 
-function createVisit_(payload) {
+function updateShop_(payload, user) {
+  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  if (!shop) throw new Error('Không tìm thấy quán.');
+  if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được sửa quán do mình phụ trách.');
+  const gpsChanged = (payload.latitude !== undefined && String(payload.latitude) !== String(shop.latitude || '')) || (payload.longitude !== undefined && String(payload.longitude) !== String(shop.longitude || ''));
+  if (gpsChanged && String(shop.gps_locked) === 'true' && String(shop.gps_edit_granted) !== 'true') throw new Error('GPS đã khóa. Hãy nhờ Admin cấp quyền sửa GPS một lần.');
+  const changes = Object.assign({}, payload, { updated_at: now_() });
+  if (role_(user) === 'sales') changes.salesperson_id = user.user_id;
+  if (gpsChanged) { changes.gps_locked = true; changes.gps_edit_granted = false; }
+  return updateRow_('SHOPS', changes, 'shop_id');
+}
+
+function grantGpsEdit_(payload) {
   if (!payload.shop_id) throw new Error('Thiếu shop_id.');
+  return updateRow_('SHOPS', { shop_id: payload.shop_id, gps_edit_granted: true }, 'shop_id');
+}
+
+function checkIn_(payload, user) {
+  if (!payload.shop_id || !payload.latitude || !payload.longitude) throw new Error('Thiếu quán hoặc vị trí GPS hiện tại.');
+  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  if (!shop) throw new Error('Không tìm thấy quán.');
+  if (!shop.latitude || !shop.longitude) throw new Error('Quán chưa có GPS. Hãy cập nhật GPS tại Danh sách quán.');
+  if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được check-in quán do mình phụ trách.');
+  const distance = distanceMeters_(Number(shop.latitude), Number(shop.longitude), Number(payload.latitude), Number(payload.longitude));
+  if (distance > 50) throw new Error('Check-in không hợp lệ: bạn đang cách quán ' + Math.round(distance) + ' m, vượt bán kính 50 m.');
   const row = normalize_(payload, APP.sheets.VISITS);
-  row.visit_id = row.visit_id || id_('VISIT');
-  row.visit_date = row.visit_date || date_();
+  row.visit_id = id_('VISIT');
+  row.shop_id = shop.shop_id;
+  row.salesperson_id = role_(user) === 'sales' ? user.user_id : (payload.salesperson_id || shop.salesperson_id || '');
+  row.visit_date = payload.visit_date || date_();
+  row.latitude = Number(payload.latitude);
+  row.longitude = Number(payload.longitude);
+  row.checkin_latitude = Number(payload.latitude);
+  row.checkin_longitude = Number(payload.longitude);
+  row.distance_meters = Math.round(distance * 10) / 10;
+  row.checkin_verified = true;
   row.created_at = now_();
   appendRow_('VISITS', row);
-  audit_('createVisit', row.visit_id, row);
+  audit_('checkIn', row.visit_id, row);
   return row;
 }
 
-function uploadVisitPhoto_(payload) {
+function createVisit_(payload, user) {
+  return checkIn_(payload, user);
+}
+
+function uploadShopPhoto_(payload, user) {
+  if (!payload.data_url || !payload.shop_id) throw new Error('Thiếu ảnh hoặc mã quán.');
+  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  if (!shop) throw new Error('Không tìm thấy quán.');
+  if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được cập nhật ảnh quán do mình phụ trách.');
+  const match = String(payload.data_url).match(/^data:(.*?);base64,(.*)$/);
+  if (!match) throw new Error('Ảnh không đúng định dạng data URL.');
+  const folder = getOrCreateShopFolder_(shop.shop_id, shop.shop_name);
+  const stamp = Utilities.formatDate(new Date(), APP.timeZone, 'yyyyMMdd_HHmmss');
+  const fileName = (shop.shop_id + '_' + slug_(shop.shop_name) + '_' + stamp + '_Shop.jpg').replace(/_+/g, '_');
+  const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName));
+  file.setDescription('Cao Nguyen Vina Coffee - Shop ' + shop.shop_id);
+  updateRow_('SHOPS', { shop_id: shop.shop_id, photo_file_id: file.getId(), photo_url: file.getUrl(), updated_at: now_() }, 'shop_id');
+  audit_('uploadShopPhoto', shop.shop_id, { fileId: file.getId(), name: fileName });
+  return { file_id: file.getId(), file_url: file.getUrl(), file_name: fileName };
+}
+
+function uploadVisitPhoto_(payload, user) {
   if (!payload.data_url || !payload.visit_id) throw new Error('Thiếu ảnh hoặc mã visit.');
   const match = String(payload.data_url).match(/^data:(.*?);base64,(.*)$/);
   if (!match) throw new Error('Ảnh không đúng định dạng data URL.');
   const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  if (shop && role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn không có quyền cập nhật ảnh cho quán này.');
   const folder = getOrCreateShopFolder_(payload.shop_id, shop ? shop.shop_name : payload.shop_id);
   const safeShop = slug_(shop ? shop.shop_name : payload.shop_id);
   const stamp = Utilities.formatDate(new Date(), APP.timeZone, 'yyyyMMdd_HHmm');
@@ -213,11 +330,12 @@ function getOrders_(payload) {
   return orders.map(function(order) { return Object.assign({}, order, { shop_name: shops[order.shop_id] ? shops[order.shop_id].shop_name : '' }); });
 }
 
-function createOrder_(payload) {
+function createOrder_(payload, user) {
   if (!payload.shop_id || !payload.product_type) throw new Error('Thiếu quán hoặc loại sản phẩm.');
   const quantity = Number(payload.quantity_kg || 0);
   if (quantity <= 0) throw new Error('Số lượng Kg phải lớn hơn 0.');
   const row = normalize_(payload, APP.sheets.ORDERS);
+  if (user && role_(user) === 'sales') row.salesperson_id = user.user_id;
   row.order_id = row.order_id || id_('ORDER');
   row.quantity_kg = quantity;
   row.unit_price = Number(payload.unit_price || 0);
@@ -228,6 +346,13 @@ function createOrder_(payload) {
   appendRow_('ORDERS', row);
   audit_('createOrder', row.order_id, row);
   return row;
+}
+
+function updateOrder_(payload, user) {
+  const order = getRows_('ORDERS').filter(function(row) { return row.order_id === payload.order_id; })[0];
+  if (!order) throw new Error('Không tìm thấy đơn hàng.');
+  if (role_(user) === 'sales' && order.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được sửa đơn hàng của mình.');
+  return updateRow_('ORDERS', payload, 'order_id');
 }
 
 function confirmPayment_(payload) {
@@ -275,14 +400,17 @@ function getDashboard_(payload) {
   const shops = filterRows_(getRows_('SHOPS'), payload);
   const visits = filterRows_(getRows_('VISITS'), payload);
   const orders = filterRows_(getRows_('ORDERS'), payload);
-  const payments = getRows_('PAYMENTS').filter(function(payment) { return inDateRange_(payment.paid_date, payload); });
+  const orderIds = indexBy_(orders, 'order_id');
+  const payments = getRows_('PAYMENTS').filter(function(payment) { return inDateRange_(payment.paid_date, payload) && (!payload.salespersonId || orderIds[payment.order_id]); });
   const revenue = sum_(orders, 'total_amount');
   const paid = sum_(payments, 'amount');
   return { shopCount: shops.length, visitCount: visits.length, orderCount: orders.length, quantityKg: sum_(orders, 'quantity_kg'), revenue: revenue, paid: paid, debt: Math.max(0, revenue - paid), kpiCompletion: calculateKpiCompletion_(payload), series: buildSeries_(orders, visits, payload) };
 }
 
 function getReports_(payload) {
-  return { dashboard: getDashboard_(payload), shops: getShops_(payload), orders: getOrders_(payload), visits: filterRows_(getRows_('VISITS'), payload), payments: getRows_('PAYMENTS').filter(function(row) { return inDateRange_(row.paid_date, payload); }), kpis: listRows_('KPI_DEFINITIONS', payload) };
+  const orders = getOrders_(payload);
+  const orderIds = indexBy_(orders, 'order_id');
+  return { dashboard: getDashboard_(payload), shops: getShops_(payload), orders: orders, visits: filterRows_(getRows_('VISITS'), payload), payments: getRows_('PAYMENTS').filter(function(row) { return inDateRange_(row.paid_date, payload) && (!payload.salespersonId || orderIds[row.order_id]); }), kpis: listRows_('KPI_DEFINITIONS', payload) };
 }
 
 function exportReportXlsx_(payload) {
@@ -308,6 +436,14 @@ function reportRows_(type, report) {
 }
 
 function listRows_(sheetName, payload) { return filterRows_(getRows_(sheetName), payload); }
+
+function getKpiTargets_(payload) {
+  return getRows_('KPI_TARGETS').filter(function(row) {
+    const ownerOk = !payload.salespersonId || !row.user_id || row.user_id === payload.salespersonId;
+    const dateValue = row.start_date || row.end_date || row.created_at;
+    return ownerOk && inDateRange_(dateValue, payload);
+  });
+}
 
 function filterRows_(rows, payload) {
   return rows.filter(function(row) {
@@ -402,6 +538,8 @@ function now_() { return Utilities.formatDate(new Date(), APP.timeZone, "yyyy-MM
 function date_() { return Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-MM-dd'); }
 function id_(prefix) { return prefix + '_' + Utilities.getUuid().replace(/-/g, '').slice(0, 12).toUpperCase(); }
 function slug_(value) { return String(value || 'NO_NAME').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase(); }
+function hashPassword_(password, salt) { const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(salt || '') + ':' + String(password || '')); return bytes.map(function(byte) { const value = byte < 0 ? byte + 256 : byte; return ('0' + value.toString(16)).slice(-2); }).join(''); }
+function distanceMeters_(lat1, lon1, lat2, lon2) { const radius = 6371000; const toRadians = function(value) { return value * Math.PI / 180; }; const dLat = toRadians(lat2 - lat1); const dLon = toRadians(lon2 - lon1); const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2); return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); }
 function audit_(action, entityId, details) { try { appendRow_('LOGS', { log_id: id_('LOG'), email: Session.getActiveUser().getEmail() || '', action: action, entity_id: entityId, created_at: now_(), details: JSON.stringify(details).slice(0, 45000) }); } catch (_) {} }
 function logError_(action, error) { try { audit_('ERROR_' + action, '', { error: safeMessage_(error) }); } catch (_) {} }
 function safeMessage_(error) { return error && error.message ? error.message : String(error); }

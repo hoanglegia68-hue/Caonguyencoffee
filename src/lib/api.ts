@@ -1,7 +1,23 @@
 export type ApiPayload = Record<string, unknown>
 
+export type SessionUser = {
+  user_id: string
+  username?: string
+  full_name: string
+  email?: string
+  role: string
+  phone?: string
+  active?: boolean | string
+}
+
+export type AuthSession = {
+  token: string
+  user: SessionUser
+}
+
 const directUrl = import.meta.env.VITE_APPS_SCRIPT_URL as string | undefined
 const endpoint = directUrl || '/api/apps-script'
+const SESSION_KEY = 'cao_nguyen_vina_coffee_session'
 
 export class ApiError extends Error {
   constructor(message: string, public readonly offline = false) {
@@ -10,16 +26,40 @@ export class ApiError extends Error {
   }
 }
 
+export function getStoredSession(): AuthSession | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY)
+    return raw ? JSON.parse(raw) as AuthSession : null
+  } catch (_) {
+    return null
+  }
+}
+
+export function storeSession(session: AuthSession) {
+  window.localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+}
+
+export function clearStoredSession() {
+  window.localStorage.removeItem(SESSION_KEY)
+}
+
+export async function loginWithPassword(username: string, password: string) {
+  const session = await apiRequest<AuthSession>('login', { username, password })
+  storeSession(session)
+  return session
+}
+
 export async function apiRequest<T = unknown>(action: string, payload: ApiPayload = {}): Promise<T> {
   if (!directUrl && !import.meta.env.VITE_API_PROXY_ENABLED && window.location.hostname === 'localhost') {
     throw new ApiError('Chưa cấu hình Apps Script API. Vui lòng thiết lập VITE_APPS_SCRIPT_URL hoặc APPS_SCRIPT_URL.', true)
   }
 
   const url = directUrl ? `${endpoint}?action=${encodeURIComponent(action)}` : endpoint
+  const session = getStoredSession()
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...payload }),
+    body: JSON.stringify({ action, ...payload, ...(session?.token ? { session_token: session.token } : {}) }),
   })
 
   if (!response.ok) {
