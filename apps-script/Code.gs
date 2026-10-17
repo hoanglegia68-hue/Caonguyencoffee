@@ -11,9 +11,9 @@ const APP = {
   driveRootFolderId: '1xJsrPnZNltFQs4djPO-SM7_FrwoSxu8r',
   timeZone: 'Asia/Ho_Chi_Minh',
   sheets: {
-    USERS: ['user_id', 'username', 'password', 'password_hash', 'email', 'full_name', 'role', 'phone', 'active'],
+    USERS: ['user_id', 'email', 'full_name', 'role', 'phone', 'active', 'username', 'password', 'password_hash'],
     SHOPS: ['shop_id', 'shop_name', 'address', 'latitude', 'longitude', 'phone', 'contact_name', 'current_supplier', 'salesperson_id', 'status', 'notes', 'created_at', 'updated_at', 'gps_locked', 'gps_edit_granted', 'photo_file_id', 'photo_url'],
-    VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'checkin_latitude', 'checkin_longitude', 'distance_meters', 'checkin_verified', 'created_at'],
+    VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'created_at', 'checkin_latitude', 'checkin_longitude', 'distance_meters', 'checkin_verified'],
     ORDERS: ['order_id', 'shop_id', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status', 'notes', 'created_at'],
     PAYMENTS: ['payment_id', 'order_id', 'shop_id', 'accountant_id', 'paid_date', 'amount', 'payment_method', 'status', 'notes'],
     KPI_DEFINITIONS: ['kpi_id', 'kpi_code', 'kpi_name', 'description', 'unit', 'data_source', 'calculation_type', 'active'],

@@ -32,15 +32,15 @@ Nếu không thiết lập URL, giao diện vẫn chạy với trạng thái r�
 Sau khi chạy `initializeSchema`, nhập một dòng cho mỗi người dùng. Các cột chính:
 
 ```text
-user_id | username | password | password_hash | email | full_name | role | phone | active
+user_id | email | full_name | role | phone | active | username | password | password_hash
 ```
 
 Ví dụ:
 
 ```text
-U001 | admin | matkhau-admin | | admin@caonguyen.vn | Quản trị hệ thống | admin | | TRUE
-U002 | sales01 | matkhau-sales | | sales01@caonguyen.vn | Nguyễn Văn A | sales | | TRUE
-U003 | ketoan01 | matkhau-ketoan | | ketoan@caonguyen.vn | Kế toán | accountant | | TRUE
+U001 | admin@caonguyen.vn | Quản trị hệ thống | admin | | TRUE | admin | matkhau-admin |
+U002 | sales01@caonguyen.vn | Nguyễn Văn A | sales | | TRUE | sales01 | matkhau-sales |
+U003 | ketoan@caonguyen.vn | Kế toán | accountant | | TRUE | ketoan01 | matkhau-ketoan |
 ```
 
 `role` nhận `admin`, `sales` hoặc `accountant`/`kế toán`. Tài khoản Sales chỉ thấy dữ liệu quán, đơn hàng, KPI và tuyến của chính mình. Tài khoản Kế toán chỉ thấy Menu Thanh toán. Không gửi mật khẩu lên GitHub; chỉ người quản trị được quyền xem tab `USERS`.
