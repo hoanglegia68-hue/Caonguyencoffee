@@ -73,7 +73,7 @@ function route_(action, payload, user) {
     case 'createOrder': return createOrder_(payload, user);
     case 'updateOrder': return updateOrder_(payload, user);
     case 'confirmPayment': return confirmPayment_(payload);
-    case 'getKpis': return listRows_('KPI_DEFINITIONS', payload);
+    case 'getKpis': return getRows_('KPI_DEFINITIONS');
     case 'getKpiTargets': return getKpiTargets_(payload);
     case 'createKpi': return createKpi_(payload);
     case 'createKpiTarget': return createKpiTarget_(payload);
@@ -410,7 +410,7 @@ function getDashboard_(payload) {
 function getReports_(payload) {
   const orders = getOrders_(payload);
   const orderIds = indexBy_(orders, 'order_id');
-  return { dashboard: getDashboard_(payload), shops: getShops_(payload), orders: orders, visits: filterRows_(getRows_('VISITS'), payload), payments: getRows_('PAYMENTS').filter(function(row) { return inDateRange_(row.paid_date, payload) && (!payload.salespersonId || orderIds[row.order_id]); }), kpis: listRows_('KPI_DEFINITIONS', payload) };
+  return { dashboard: getDashboard_(payload), shops: getShops_(payload), orders: orders, visits: filterRows_(getRows_('VISITS'), payload), payments: getRows_('PAYMENTS').filter(function(row) { return inDateRange_(row.paid_date, payload) && (!payload.salespersonId || orderIds[row.order_id]); }), kpis: getRows_('KPI_DEFINITIONS') };
 }
 
 function exportReportXlsx_(payload) {
