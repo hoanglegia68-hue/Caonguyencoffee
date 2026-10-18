@@ -44,6 +44,7 @@ type Order = {
   order_id: string
   shop_id: string
   shop_name?: string
+  salesperson_id?: string
   salesperson_name?: string
   product_type: string
   quantity_kg: number
@@ -119,6 +120,21 @@ function formatCurrency(value = 0) {
   return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Number(value) || 0)
 }
 
+function parseUserNumber(value?: number | string) {
+  let text = String(value ?? '').trim().replace(/\s/g, '')
+  if (!text) return Number.NaN
+  const commaIndex = text.lastIndexOf(',')
+  const dotIndex = text.lastIndexOf('.')
+  if (commaIndex >= 0 && dotIndex >= 0) {
+    if (commaIndex > dotIndex) text = text.replace(/\./g, '').replace(',', '.')
+    else text = text.replace(/,/g, '')
+  } else if (commaIndex >= 0) {
+    text = text.replace(',', '.')
+  }
+  const number = Number(text)
+  return Number.isFinite(number) ? number : Number.NaN
+}
+
 function formatDate(value?: string) {
   if (!value) return '—'
   const date = new Date(value)
@@ -176,6 +192,9 @@ function App() {
   const [dateFrom, setDateFrom] = useState(getDateDaysAgo(7))
   const [dateTo, setDateTo] = useState(todayInput())
   const [salesFilter, setSalesFilter] = useState('all')
+  const [paymentDateFrom, setPaymentDateFrom] = useState(getDateDaysAgo(30))
+  const [paymentDateTo, setPaymentDateTo] = useState(todayInput())
+  const [paymentSalesFilter, setPaymentSalesFilter] = useState('all')
   const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard)
   const [shops, setShops] = useState<Shop[]>([])
   const [orders, setOrders] = useState<Order[]>([])
@@ -204,16 +223,19 @@ function App() {
     setLoading(true)
     try {
       if (isAccountant) {
-        const ordersResult = await apiRequest<Order[]>('getOrders', {})
+        const ordersResult = await apiRequest<Order[]>('getOrders', { dateFrom: paymentDateFrom, dateTo: paymentDateTo, salespersonId: paymentSalesFilter === 'all' ? '' : paymentSalesFilter })
         setOrders(Array.isArray(ordersResult) ? ordersResult : [])
         setConnected(true)
         return
       }
       const selectedSales = isAdmin && salesFilter !== 'all' ? salesFilter : ''
+      const orderDateFrom = activeView === 'payments' ? paymentDateFrom : dateFrom
+      const orderDateTo = activeView === 'payments' ? paymentDateTo : dateTo
+      const orderSalesFilter = activeView === 'payments' && isAdmin && paymentSalesFilter !== 'all' ? paymentSalesFilter : selectedSales
       const [dashboardResult, shopsResult, ordersResult, kpisResult, usersResult, kpiTargetsResult] = await Promise.all([
         apiRequest<DashboardData>('getDashboard', { dateFrom, dateTo, salespersonId: selectedSales }),
         apiRequest<Shop[]>('getShops', { dateFrom, dateTo, salespersonId: selectedSales }),
-        apiRequest<Order[]>('getOrders', { dateFrom, dateTo, salespersonId: selectedSales }),
+        apiRequest<Order[]>('getOrders', { dateFrom: orderDateFrom, dateTo: orderDateTo, salespersonId: orderSalesFilter }),
         apiRequest<Kpi[]>('getKpis', {}),
         apiRequest<User[]>('getUsers', {}),
         apiRequest<KpiTarget[]>('getKpiTargets', {}),
@@ -241,12 +263,22 @@ function App() {
 
   useEffect(() => {
     if (session) void loadData()
-  }, [session?.token, dateFrom, dateTo, salesFilter])
+  }, [session?.token, activeView, dateFrom, dateTo, salesFilter, paymentDateFrom, paymentDateTo, paymentSalesFilter])
 
   const salesUsers = useMemo(() => {
     const result = users.filter((user) => normalizeRole(user.role) === 'sales' && String(user.active) !== 'false')
     return result.length || !currentUser || !isSales ? result : [currentUser]
   }, [users, currentUser, isSales])
+
+  const paymentSalesUsers = useMemo(() => {
+    if (salesUsers.length) return salesUsers
+    const byId: Record<string, User> = {}
+    orders.forEach((order) => {
+      const userId = order.salesperson_id || order.salesperson_name
+      if (userId) byId[userId] = { user_id: userId, full_name: order.salesperson_name || userId, role: 'sales', active: true }
+    })
+    return Object.values(byId)
+  }, [salesUsers, orders])
 
   const visibleNavItems = navItems.filter((item) => {
     if (isAccountant) return item.id === 'payments'
@@ -312,7 +344,7 @@ function App() {
           {activeView === 'shops' && <ShopsView shops={shops} salesUsers={salesUsers} isAdmin={isAdmin} onAdd={() => { setEditingShop(null); setModal('shop') }} onEdit={(shop) => { setEditingShop(shop); setModal('shop') }} onGrantGps={grantGpsEdit} onVisit={() => setModal('visit')} />}
           {activeView === 'routes' && <RoutesView shops={shops} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onSaved={() => { setModal(null); void loadData() }} showToast={showToast} />}
           {activeView === 'orders' && <OrdersView orders={orders} shops={shops} canCreate={isAdmin || isSales} onAdd={() => setModal('order')} />}
-          {activeView === 'payments' && <PaymentsView orders={orders} onConfirm={async (order) => { try { await apiRequest('confirmPayment', { order_id: order.order_id, amount: order.total_amount, payment_method: 'Chuyển khoản' }); showToast('Đã xác nhận thanh toán'); void loadData() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xác nhận thanh toán', 'error') } }} />}
+          {activeView === 'payments' && <PaymentsView orders={orders} salesUsers={paymentSalesUsers} dateFrom={paymentDateFrom} dateTo={paymentDateTo} salesFilter={paymentSalesFilter} onDateFrom={setPaymentDateFrom} onDateTo={setPaymentDateTo} onSales={setPaymentSalesFilter} onConfirm={async (order) => { try { await apiRequest('confirmPayment', { order_id: order.order_id, amount: order.total_amount, payment_method: 'Chuyển khoản' }); showToast('Đã xác nhận thanh toán'); void loadData() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xác nhận thanh toán', 'error') } }} />}
           {activeView === 'kpi' && <KpiView kpis={kpis} kpiTargets={kpiTargets} canManage={isAdmin} onAdd={() => setModal('kpi')} onAssign={() => setModal('kpi-target')} />}
           {activeView === 'reports' && <ReportsView dateFrom={dateFrom} dateTo={dateTo} salesFilter={isAdmin ? salesFilter : 'all'} showToast={showToast} />}
         </div>
@@ -452,14 +484,29 @@ function OrdersView({ orders, shops, canCreate, onAdd }: { orders: Order[]; shop
   const totalSold = orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0)
   return <>
     <PageIntro eyebrow="BÁN HÀNG" title="Đơn hàng" description="Theo dõi sản lượng Flamen theo từng quán và nhân viên Sales." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng" actionIcon="cart" />
-    <div className="summary-strip order-summary"><div><span>Tổng đơn trong kỳ</span><strong>{orders.length}</strong></div><div><span>Tổng sản lượng</span><strong>{orders.reduce((sum, order) => sum + Number(order.quantity_kg || 0), 0)} kg</strong></div><div><span>Tổng tiền đã bán</span><strong>{formatCurrency(totalSold)} đ</strong></div><div><span>Đã thanh toán</span><strong>{orders.filter((order) => order.payment_status === 'Đã thanh toán').length}</strong></div><div><span>Chờ thanh toán</span><strong>{orders.filter((order) => order.payment_status !== 'Đã thanh toán').length}</strong></div></div>
+    <div className="summary-strip order-summary"><div><span>Tổng đơn trong kỳ</span><strong>{orders.length}</strong></div><div><span>Tổng sản lượng</span><strong>{orders.reduce((sum, order) => sum + Number(order.quantity_kg || 0), 0)} kg</strong></div><div><span>Tổng tiền đã bán</span><strong>{formatCurrency(totalSold)} đ</strong></div><div><span>Đã thanh toán</span><strong>{formatCurrency(orders.filter((order) => order.payment_status === 'Đã thanh toán').reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div><div><span>Chờ thanh toán</span><strong>{orders.filter((order) => order.payment_status !== 'Đã thanh toán').length}</strong></div></div>
     <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales bán</th><th>Sản phẩm</th><th>Số lượng</th><th>Thành tiền</th><th>Ngày đặt</th><th>Thanh toán</th></tr></thead><tbody>{orders.map((order) => <tr key={order.order_id}><td><span className="mono">{order.order_id}</span></td><td>{order.shop_name || shops.find((shop) => shop.shop_id === order.shop_id)?.shop_name || '—'}</td><td>{order.salesperson_name || '—'}</td><td>{order.product_type}</td><td><strong>{order.quantity_kg} kg</strong></td><td>{formatCurrency(order.total_amount)} đ</td><td>{formatDate(order.order_date)}</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td></tr>)}</tbody></table>{orders.length === 0 && <EmptyState icon="cart" title="Chưa có đơn hàng" description="Các đơn hàng do Sales ghi nhận sẽ hiển thị tại đây." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng đầu tiên" />}</div></div>
   </>
 }
 
-function PaymentsView({ orders, onConfirm }: { orders: Order[]; onConfirm: (order: Order) => void }) {
+function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDateFrom, onDateTo, onSales, onConfirm }: { orders: Order[]; salesUsers: User[]; dateFrom: string; dateTo: string; salesFilter: string; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onConfirm: (order: Order) => void }) {
   const unpaid = orders.filter((order) => order.payment_status !== 'Đã thanh toán')
-  return <><PageIntro eyebrow="TÀI CHÍNH" title="Xác nhận thanh toán" description="Kế toán xác nhận tiền về và cập nhật công nợ theo từng đơn hàng." /><div className="summary-strip payment-summary"><div><span>Đơn chờ xác nhận</span><strong>{unpaid.length}</strong></div><div><span>Giá trị chờ thu</span><strong>{formatCurrency(unpaid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div><div><span>Đã thu trong kỳ</span><strong>{formatCurrency(orders.filter((order) => order.payment_status === 'Đã thanh toán').reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div></div><div className="panel"><div className="panel-heading"><div><h3>Danh sách cần xử lý</h3><span>Cập nhật trạng thái thanh toán sau khi đối soát</span></div></div>{unpaid.length === 0 ? <EmptyState icon="wallet" title="Chưa có khoản cần xác nhận" description="Khi có đơn hàng chưa thanh toán, Kế toán sẽ xử lý tại đây." /> : <div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Ngày đặt</th><th>Số tiền</th><th>Trạng thái</th><th /></tr></thead><tbody>{unpaid.map((order) => <tr key={order.order_id}><td className="mono">{order.order_id}</td><td>{order.shop_name || order.shop_id}</td><td>{formatDate(order.order_date)}</td><td>{formatCurrency(order.total_amount)} đ</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td><td><button className="table-action" onClick={() => onConfirm(order)}><Icon name="check" size={15} /> Xác nhận</button></td></tr>)}</tbody></table></div>}</div></>
+  const salesStats = Object.values(orders.reduce<Record<string, { name: string; orderCount: number; paid: number; unpaid: number }>>((result, order) => {
+    const key = order.salesperson_id || order.salesperson_name || 'unassigned'
+    const stat = result[key] || { name: order.salesperson_name || order.salesperson_id || 'Chưa xác định', orderCount: 0, paid: 0, unpaid: 0 }
+    stat.orderCount += 1
+    if (order.payment_status === 'Đã thanh toán') stat.paid += Number(order.total_amount || 0)
+    else stat.unpaid += Number(order.total_amount || 0)
+    result[key] = stat
+    return result
+  }, {}))
+  return <>
+    <PageIntro eyebrow="TÀI CHÍNH" title="Xác nhận thanh toán" description="Kế toán xác nhận tiền về và cập nhật công nợ theo từng đơn hàng." />
+    <FilterBar dateFrom={dateFrom} dateTo={dateTo} salesFilter={salesFilter} salesUsers={salesUsers} canFilterSales onDateFrom={onDateFrom} onDateTo={onDateTo} onSales={onSales} />
+    <div className="summary-strip payment-summary"><div><span>Đơn chờ xác nhận</span><strong>{unpaid.length}</strong></div><div><span>Giá trị chờ thu</span><strong>{formatCurrency(unpaid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div><div><span>Đã thu trong kỳ</span><strong>{formatCurrency(orders.filter((order) => order.payment_status === 'Đã thanh toán').reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div></div>
+    <div className="panel payment-sales-panel"><div className="panel-heading"><div><h3>Thống kê theo Sales</h3><span>Đã thu và còn chờ thu trong kỳ đã chọn</span></div></div>{salesStats.length === 0 ? <EmptyState icon="users" title="Chưa có dữ liệu thanh toán" description="Thay đổi thời gian hoặc Sales để xem thống kê." /> : <div className="table-wrap"><table><thead><tr><th>Sales</th><th>Số đơn</th><th>Đã thanh toán</th><th>Chờ thanh toán</th></tr></thead><tbody>{salesStats.map((stat) => <tr key={stat.name}><td><strong>{stat.name}</strong></td><td>{stat.orderCount}</td><td>{formatCurrency(stat.paid)} đ</td><td>{formatCurrency(stat.unpaid)} đ</td></tr>)}</tbody></table></div>}</div>
+    <div className="panel"><div className="panel-heading"><div><h3>Danh sách cần xử lý</h3><span>Cập nhật trạng thái thanh toán sau khi đối soát</span></div></div>{unpaid.length === 0 ? <EmptyState icon="wallet" title="Chưa có khoản cần xác nhận" description="Khi có đơn hàng chưa thanh toán, Kế toán sẽ xử lý tại đây." /> : <div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales</th><th>Ngày đặt</th><th>Số tiền</th><th>Trạng thái</th><th /></tr></thead><tbody>{unpaid.map((order) => <tr key={order.order_id}><td className="mono">{order.order_id}</td><td>{order.shop_name || order.shop_id}</td><td>{order.salesperson_name || order.salesperson_id || '—'}</td><td>{formatDate(order.order_date)}</td><td>{formatCurrency(order.total_amount)} đ</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td><td><button className="table-action" onClick={() => onConfirm(order)}><Icon name="check" size={15} /> Xác nhận</button></td></tr>)}</tbody></table></div>}</div>
+  </>
 }
 
 function KpiView({ kpis, kpiTargets, canManage, onAdd, onAssign }: { kpis: Kpi[]; kpiTargets: KpiTarget[]; canManage: boolean; onAdd: () => void; onAssign: () => void }) {
@@ -514,9 +561,21 @@ function ShopModal({ shop, salesUsers, currentUser, isAdmin, onClose, onSaved, s
 function VisitModal({ shops, salesUsers, currentUser, isAdmin, onClose, onSaved, showToast }: { shops: Shop[]; salesUsers: User[]; currentUser: User; isAdmin: boolean; onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) { return <Modal eyebrow="HIỆN TRƯỜNG" title="Check-in đi tuyến" onClose={onClose}><RoutesView shops={shops} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onSaved={onSaved} showToast={showToast} /></Modal> }
 
 function OrderModal({ shops, onClose, onSaved, showToast }: { shops: Shop[]; onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
-  const [form, setForm] = useState({ shop_id: '', product_type: 'Flamen pha máy', quantity_kg: '', unit_price: '', notes: '' }); const [saving, setSaving] = useState(false); const amount = Number(form.quantity_kg || 0) * Number(form.unit_price || 0)
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!form.shop_id || !form.quantity_kg) return showToast('Vui lòng chọn quán và nhập số lượng', 'error'); setSaving(true); try { await apiRequest('createOrder', { ...form, quantity_kg: Number(form.quantity_kg), unit_price: Number(form.unit_price), total_amount: amount }); onSaved() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể tạo đơn', 'error') } finally { setSaving(false) } }
-  return <Modal eyebrow="BÁN HÀNG" title="Tạo đơn hàng" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="field wide"><span>Quán <b>*</b></span><select autoFocus value={form.shop_id} onChange={(event) => setForm({ ...form, shop_id: event.target.value })}><option value="">Chọn quán</option>{shops.map((shop) => <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>)}</select></label><div className="form-grid"><label className="field wide"><span>Loại cafe <b>*</b></span><select value={form.product_type} onChange={(event) => setForm({ ...form, product_type: event.target.value })}><option>Flamen pha máy</option><option>Flamen pha phin</option></select></label><label className="field"><span>Số lượng (Kg) <b>*</b></span><input type="number" min="0" step="0.1" value={form.quantity_kg} onChange={(event) => setForm({ ...form, quantity_kg: event.target.value })} /></label><label className="field"><span>Đơn giá</span><input type="number" min="0" value={form.unit_price} onChange={(event) => setForm({ ...form, unit_price: event.target.value })} /></label><label className="field wide"><span>Tổng tiền dự kiến</span><div className="amount-preview">{formatCurrency(amount)} đ</div></label><label className="field wide"><span>Ghi chú</span><textarea rows={3} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu đơn hàng'}</button></div></form></Modal>
+  const [form, setForm] = useState({ shop_id: '', product_type: 'Flamen pha máy', quantity_kg: '', unit_price: '', notes: '' })
+  const [saving, setSaving] = useState(false)
+  const quantity = parseUserNumber(form.quantity_kg)
+  const unitPrice = parseUserNumber(form.unit_price)
+  const amount = (Number.isFinite(quantity) ? quantity : 0) * (Number.isFinite(unitPrice) ? unitPrice : 0)
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!form.shop_id) return showToast('Vui lòng chọn quán', 'error')
+    if (!Number.isFinite(quantity) || quantity <= 0) return showToast('Số lượng Kg phải là số lớn hơn 0', 'error')
+    setSaving(true)
+    try { await apiRequest('createOrder', { ...form, quantity_kg: quantity, unit_price: Number.isFinite(unitPrice) ? unitPrice : 0, total_amount: amount }); onSaved() }
+    catch (error) { showToast(error instanceof Error ? error.message : 'Không thể tạo đơn', 'error') }
+    finally { setSaving(false) }
+  }
+  return <Modal eyebrow="BÁN HÀNG" title="Tạo đơn hàng" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="field wide"><span>Quán <b>*</b></span><select autoFocus value={form.shop_id} onChange={(event) => setForm({ ...form, shop_id: event.target.value })}><option value="">Chọn quán</option>{shops.map((shop) => <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>)}</select></label><div className="form-grid"><label className="field wide"><span>Loại cafe <b>*</b></span><select value={form.product_type} onChange={(event) => setForm({ ...form, product_type: event.target.value })}><option>Flamen pha máy</option><option>Flamen pha phin</option></select></label><label className="field"><span>Số lượng (Kg) <b>*</b></span><input type="text" inputMode="decimal" minLength={1} value={form.quantity_kg} onChange={(event) => setForm({ ...form, quantity_kg: event.target.value })} placeholder="Ví dụ: 10 hoặc 10,5" /></label><label className="field"><span>Đơn giá</span><input type="text" inputMode="decimal" value={form.unit_price} onChange={(event) => setForm({ ...form, unit_price: event.target.value })} placeholder="Nhập đơn giá" /></label><label className="field wide"><span>Tổng tiền dự kiến</span><div className="amount-preview">{formatCurrency(amount)} đ</div></label><label className="field wide"><span>Ghi chú</span><textarea rows={3} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu đơn hàng'}</button></div></form></Modal>
 }
 
 function KpiModal({ onClose, onSaved, showToast }: { onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {

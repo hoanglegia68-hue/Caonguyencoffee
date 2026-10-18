@@ -358,14 +358,14 @@ function getOrders_(payload) {
 
 function createOrder_(payload, user) {
   if (!payload.shop_id || !payload.product_type) throw new Error('Thiếu quán hoặc loại sản phẩm.');
-  const quantity = Number(payload.quantity_kg || 0);
+  const quantity = parseNumber_(payload.quantity_kg);
   if (quantity <= 0) throw new Error('Số lượng Kg phải lớn hơn 0.');
   const row = normalize_(payload, APP.sheets.ORDERS);
   if (user && role_(user) === 'sales') row.salesperson_id = user.user_id;
   row.order_id = row.order_id || id_('ORDER');
   row.quantity_kg = quantity;
-  row.unit_price = Number(payload.unit_price || 0);
-  row.total_amount = Number(payload.total_amount || row.quantity_kg * row.unit_price);
+  row.unit_price = parseNumber_(payload.unit_price);
+  row.total_amount = payload.total_amount === undefined || payload.total_amount === '' ? row.quantity_kg * row.unit_price : parseNumber_(payload.total_amount);
   row.order_date = row.order_date || date_();
   row.payment_status = row.payment_status || 'Chờ xác nhận';
   row.created_at = now_();
@@ -586,6 +586,20 @@ function parseCoordinate_(value) {
   }
   const number = Number((negative ? '-' : '') + text);
   return isFinite(number) ? number : NaN;
+}
+function parseNumber_(value) {
+  let text = String(value === undefined || value === null ? '' : value).trim().replace(/\s/g, '');
+  if (!text) return 0;
+  const commaIndex = text.lastIndexOf(',');
+  const dotIndex = text.lastIndexOf('.');
+  if (commaIndex >= 0 && dotIndex >= 0) {
+    if (commaIndex > dotIndex) text = text.replace(/\./g, '').replace(',', '.');
+    else text = text.replace(/,/g, '');
+  } else if (commaIndex >= 0) {
+    text = text.replace(',', '.');
+  }
+  const number = Number(text);
+  return isFinite(number) ? number : 0;
 }
 function requireCoordinate_(value, label, min, max) {
   const number = parseCoordinate_(value);
