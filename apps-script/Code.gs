@@ -164,6 +164,7 @@ function sanitizeUser_(user) {
 
 function role_(user) { return String(user && user.role || '').trim().toLowerCase(); }
 function isActive_(value) { return value !== false && String(value).trim().toLowerCase() !== 'false' && String(value).trim() !== '0'; }
+function isTrue_(value) { return value === true || String(value).trim().toLowerCase() === 'true' || String(value).trim() === '1'; }
 
 function scopePayload_(payload, user) {
   const scoped = Object.assign({}, payload || {});
@@ -323,11 +324,12 @@ function checkIn_(payload, user) {
   const currentLongitude = requireCoordinate_(payload.longitude, 'kinh độ hiện tại', -180, 180);
   const distance = distanceMeters_(shopLatitude, shopLongitude, currentLatitude, currentLongitude);
   if (distance > 50) throw new Error('Check-in không hợp lệ: bạn đang cách quán ' + Math.round(distance) + ' m, vượt bán kính 50 m.');
+  const visitDate = String(payload.visit_date || date_()).slice(0, 10);
   const row = normalize_(payload, APP.sheets.VISITS);
   row.visit_id = id_('VISIT');
   row.shop_id = shop.shop_id;
   row.salesperson_id = role_(user) === 'sales' ? user.user_id : (payload.salesperson_id || shop.salesperson_id || '');
-  row.visit_date = payload.visit_date || date_();
+  row.visit_date = visitDate;
   row.latitude = currentLatitude;
   row.longitude = currentLongitude;
   row.checkin_latitude = currentLatitude;
@@ -335,7 +337,17 @@ function checkIn_(payload, user) {
   row.distance_meters = Math.round(distance * 10) / 10;
   row.checkin_verified = true;
   row.created_at = now_();
-  appendRow_('VISITS', row);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const alreadyCheckedIn = getRows_('VISITS').some(function(visit) {
+      return visit.shop_id === shop.shop_id && String(visit.visit_date || '').slice(0, 10) === visitDate && isTrue_(visit.checkin_verified);
+    });
+    if (alreadyCheckedIn) throw new Error('Quán này đã được check-in hợp lệ trong ngày ' + visitDate + '.');
+    appendRowUnlocked_('VISITS', row);
+  } finally {
+    lock.releaseLock();
+  }
   audit_('checkIn', row.visit_id, row);
   return row;
 }
@@ -427,6 +439,7 @@ function createOrder_(payload, user) {
   if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được tạo đơn cho quán do mình phụ trách.');
   const quantity = parseNumber_(payload.quantity_kg);
   if (quantity <= 0) throw new Error('Số lượng Kg phải lớn hơn 0.');
+  if (!Number.isInteger(quantity)) throw new Error('Số lượng Kg phải là số nguyên, ví dụ 10.');
   if (quantity > 100000) throw new Error('Số lượng Kg vượt giới hạn cho phép.');
   const row = normalize_(payload, APP.sheets.ORDERS);
   if (user && role_(user) === 'sales') row.salesperson_id = user.user_id;
@@ -455,7 +468,7 @@ function updateOrder_(payload, user) {
   if (payload.quantity_kg !== undefined || payload.unit_price !== undefined) {
     const quantity = payload.quantity_kg === undefined ? parseNumber_(order.quantity_kg) : parseNumber_(payload.quantity_kg);
     const unitPrice = payload.unit_price === undefined ? parseNumber_(order.unit_price) : parseNumber_(payload.unit_price);
-    if (quantity <= 0 || unitPrice < 0) throw new Error('Số lượng hoặc đơn giá không hợp lệ.');
+    if (quantity <= 0 || !Number.isInteger(quantity) || unitPrice < 0) throw new Error('Số lượng phải là số nguyên lớn hơn 0 và đơn giá không được âm.');
     changes.quantity_kg = quantity;
     changes.unit_price = unitPrice;
     changes.total_amount = quantity * unitPrice;
@@ -640,10 +653,14 @@ function appendRow_(sheetName, object) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    const sheet = SpreadsheetApp.openById(APP.spreadsheetId).getSheetByName(sheetName);
-    const headers = APP.sheets[sheetName];
-    sheet.appendRow(headers.map(function(header) { return object[header] === undefined ? '' : safeCellValue_(header, object[header]); }));
+    appendRowUnlocked_(sheetName, object);
   } finally { lock.releaseLock(); }
+}
+
+function appendRowUnlocked_(sheetName, object) {
+  const sheet = SpreadsheetApp.openById(APP.spreadsheetId).getSheetByName(sheetName);
+  const headers = APP.sheets[sheetName];
+  sheet.appendRow(headers.map(function(header) { return object[header] === undefined ? '' : safeCellValue_(header, object[header]); }));
 }
 
 function normalize_(payload, headers) { const object = {}; headers.forEach(function(header) { if (payload[header] !== undefined) object[header] = safeCellValue_(header, payload[header]); }); return object; }

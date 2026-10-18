@@ -90,14 +90,27 @@ export async function fileToCompressedDataUrl(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('Chỉ được tải tệp hình ảnh')
   if (file.size > 12 * 1024 * 1024) throw new Error('Ảnh không được lớn hơn 12 MB')
   const bitmap = await createImageBitmap(file)
-  const maxSize = 1600
+  const maxSize = 1280
   const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height))
   const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('Không thể xử lý hình ảnh')
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  let width = Math.max(1, Math.round(bitmap.width * scale))
+  let height = Math.max(1, Math.round(bitmap.height * scale))
+  let output = ''
+  const qualities = [0.66, 0.58, 0.5, 0.44]
+  for (let index = 0; index < qualities.length; index += 1) {
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) {
+      bitmap.close()
+      throw new Error('Không thể xử lý hình ảnh')
+    }
+    context.drawImage(bitmap, 0, 0, width, height)
+    output = canvas.toDataURL('image/jpeg', qualities[index])
+    if (output.length <= 1_800_000 || (width <= 800 && height <= 800)) break
+    width = Math.max(800, Math.round(width * 0.82))
+    height = Math.max(800, Math.round(height * 0.82))
+  }
   bitmap.close()
-  return canvas.toDataURL('image/jpeg', 0.78)
+  return output
 }

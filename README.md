@@ -47,6 +47,8 @@ U003 | ketoan@caonguyen.vn | Kế toán | accountant | | TRUE | ketoan01 | matkh
 
 Tài khoản cũ có thể nhập mật khẩu tạm thời ở cột `password` để đăng nhập lần đầu. Sau khi đăng nhập thành công, hệ thống tự chuyển sang `password_hash` + `password_salt` và xóa mật khẩu rõ trong sheet. Từ lần sau không cần nhập lại cột `password`.
 
+Khi tạo user mới, chỉ cần nhập `user_id`, `full_name`, `role`, `active = TRUE`, `username` và mật khẩu tạm thời tại cột `password`. Để trống `password_hash` và `password_salt`; hệ thống tự tạo hai cột này sau lần đăng nhập đầu tiên. Không tự đặt cùng một mật khẩu cho nhiều user.
+
 ## 3. Thiết lập Vercel
 
 Tạo biến môi trường Production:
@@ -72,6 +74,7 @@ Sau đó redeploy. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển
 - Ảnh quán mới được cấp quyền xem bằng liên kết để thumbnail hiển thị được trên điện thoại; người dùng cần triển khai lại Apps Script sau khi cập nhật mã.
 - Ảnh chỉ nhận JPG/PNG/WebP và phải được nén trước khi gửi; Apps Script từ chối data URL không hợp lệ hoặc quá lớn.
 - Menu Đi tuyến chỉ có check-in. Check-in hợp lệ khi khoảng cách tới GPS quán không quá 50 m và được dùng để tính KPI tuyến.
+- Mỗi quán chỉ được ghi nhận một check-in hợp lệ trong ngày đã chọn.
 - Các thông tin nhạy cảm không được đặt trong frontend hoặc commit vào Git.
 
 ## 5. Phân quyền an toàn
