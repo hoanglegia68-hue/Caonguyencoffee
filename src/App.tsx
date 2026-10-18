@@ -488,15 +488,33 @@ function RoutesView({ shops, salesUsers, currentUser, isAdmin, onSaved, showToas
     if (!shopId || (isAdmin && !salespersonId)) return showToast('Vui lòng chọn quán và Sales', 'error')
     if (!navigator.geolocation) return showToast('Thiết bị không hỗ trợ GPS', 'error')
     setSaving(true)
+    let finished = false
+    let timeoutId = 0
+    const finish = (callback: () => void) => {
+      if (finished) return
+      finished = true
+      window.clearTimeout(timeoutId)
+      setSaving(false)
+      callback()
+    }
+    timeoutId = window.setTimeout(() => {
+      finish(() => showToast('Lấy GPS hoặc kết nối API quá thời gian. Hãy kiểm tra quyền vị trí và thử lại.', 'error'))
+    }, 25000)
     navigator.geolocation.getCurrentPosition(async (position) => {
+      if (finished) return
       try {
         const result = await apiRequest<{ distance_meters?: number }>('checkIn', { shop_id: shopId, salesperson_id: salespersonId, visit_date: visitDate, latitude: position.coords.latitude, longitude: position.coords.longitude })
-        showToast(`Check-in hợp lệ${result?.distance_meters !== undefined ? ` · cách quán ${result.distance_meters} m` : ''}`)
-        setReportRefresh((value) => value + 1)
-        onSaved()
-      } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể check-in', 'error') }
-      finally { setSaving(false) }
-    }, () => { setSaving(false); showToast('Không lấy được vị trí. Hãy cấp quyền GPS cho trình duyệt.', 'error') }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
+        finish(() => {
+          showToast(`Check-in hợp lệ${result?.distance_meters !== undefined ? ` · cách quán ${result.distance_meters} m` : ''}`)
+          setReportRefresh((value) => value + 1)
+          onSaved()
+        })
+      } catch (error) {
+        finish(() => showToast(error instanceof Error ? error.message : 'Không thể check-in', 'error'))
+      }
+    }, () => {
+      finish(() => showToast('Không lấy được vị trí. Hãy cấp quyền GPS cho trình duyệt.', 'error'))
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
   }
   const savedLatitude = parseCoordinate(selectedShop?.latitude)
   const savedLongitude = parseCoordinate(selectedShop?.longitude)

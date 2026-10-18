@@ -56,11 +56,24 @@ export async function apiRequest<T = unknown>(action: string, payload: ApiPayloa
 
   const url = directUrl ? `${endpoint}?action=${encodeURIComponent(action)}` : endpoint
   const session = getStoredSession()
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...payload, ...(session?.token ? { session_token: session.token } : {}) }),
-  })
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), 20000)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...payload, ...(session?.token ? { session_token: session.token } : {}) }),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiError('Kết nối API quá thời gian. Vui lòng kiểm tra mạng và thử lại.', true)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
     throw new ApiError(`API trả về lỗi HTTP ${response.status}`)
