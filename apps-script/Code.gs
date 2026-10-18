@@ -541,7 +541,7 @@ function getDashboard_(payload) {
   const payments = getRows_('PAYMENTS').filter(function(payment) { return inDateRange_(payment.paid_date, payload) && (!payload.salespersonId || orderIds[payment.order_id]); });
   const revenue = sum_(orders, 'total_amount');
   const paid = sum_(payments, 'amount');
-  return { shopCount: shops.length, visitCount: visits.length, orderCount: orders.length, quantityKg: sum_(orders, 'quantity_kg'), revenue: revenue, paid: paid, debt: Math.max(0, revenue - paid), kpiCompletion: calculateKpiCompletion_(payload), series: buildSeries_(orders, visits, payload) };
+  return { shopCount: shops.length, visitCount: visits.length, orderCount: orders.length, quantityKg: sum_(orders, 'quantity_kg'), revenue: revenue, paid: paid, debt: Math.max(0, revenue - paid), kpiCompletion: calculateKpiCompletion_(payload) };
 }
 
 function getReports_(payload) {
@@ -608,7 +608,7 @@ function getKpiProgress_(payload) {
     return Object.assign({}, definition, {
       target_value: targetValue,
       actual_value: Math.round(actual * 100) / 100,
-      progress: definitionTargets.length && targetValue > 0 ? Math.min(100, Math.round(actual / targetValue * 100)) : 0,
+      progress: targetValue > 0 ? Math.min(100, Math.round(actual / targetValue * 1000) / 10) : 0,
       target_count: displayTargets.length,
       target_status: definitionTargets.length ? 'ACTIVE' : allDefinitionTargets.length ? 'OUTSIDE_PERIOD' : 'UNASSIGNED',
       target_start_date: target.start_date || '',
@@ -679,14 +679,17 @@ function latest_(rows, key) { return rows.reduce(function(latest, row) { return 
 function averageMonthly_(rows, key) { const months = {}; rows.forEach(function(row) { const keyMonth = String(row.order_date || row.created_at || '').slice(0, 7); if (keyMonth) months[keyMonth] = (months[keyMonth] || 0) + (Number(row[key]) || 0); }); const values = Object.keys(months).map(function(key) { return months[key]; }); return values.length ? Math.round(values.reduce(function(a, b) { return a + b; }, 0) / values.length) : 0; }
 function averageMonthlyCount_(rows) { const months = {}; rows.forEach(function(row) { const keyMonth = String(row.order_date || row.created_at || '').slice(0, 7); if (keyMonth) months[keyMonth] = (months[keyMonth] || 0) + 1; }); const values = Object.keys(months).map(function(key) { return months[key]; }); return values.length ? Math.round(values.reduce(function(a, b) { return a + b; }, 0) / values.length * 10) / 10 : 0; }
 function inDateRange_(value, payload) { if (!value) return true; const date = String(value).slice(0, 10); return (!payload.dateFrom || date >= payload.dateFrom) && (!payload.dateTo || date <= payload.dateTo); }
-function buildSeries_(orders, visits, payload) { const map = {}; orders.forEach(function(order) { const key = String(order.order_date || '').slice(0, 10); if (!key || !inDateRange_(key, payload)) return; map[key] = map[key] || { label: key.slice(5), revenue: 0, quantityKg: 0, orders: 0, visits: 0 }; map[key].revenue += Number(order.total_amount) || 0; map[key].quantityKg += Number(order.quantity_kg) || 0; map[key].orders += 1; }); visits.forEach(function(visit) { const key = String(visit.visit_date || '').slice(0, 10); if (!key || !inDateRange_(key, payload)) return; map[key] = map[key] || { label: key.slice(5), revenue: 0, quantityKg: 0, orders: 0, visits: 0 }; map[key].visits += 1; }); return Object.keys(map).sort().map(function(key) { return map[key]; }).slice(-14); }
 function calculateKpiCompletion_(payload) {
   const definitions = indexBy_(getRows_('KPI_DEFINITIONS'), 'kpi_id');
-  const targets = getRows_('KPI_TARGETS').filter(function(target) {
-    const dateOk = (!payload.dateFrom || !target.end_date || target.end_date >= payload.dateFrom) && (!payload.dateTo || !target.start_date || target.start_date <= payload.dateTo);
+  const allTargets = getRows_('KPI_TARGETS').filter(function(target) {
     const ownerOk = !payload.salespersonId || !target.user_id || target.user_id === payload.salespersonId;
-    return dateOk && ownerOk && Number(target.target_value) > 0;
+    return ownerOk && Number(target.target_value) > 0;
   });
+  const matchingTargets = allTargets.filter(function(target) {
+    const dateOk = (!payload.dateFrom || !target.end_date || target.end_date >= payload.dateFrom) && (!payload.dateTo || !target.start_date || target.start_date <= payload.dateTo);
+    return dateOk;
+  });
+  const targets = matchingTargets.length ? matchingTargets : allTargets;
   if (!targets.length) return 0;
   const orders = getRows_('ORDERS');
   const visits = getRows_('VISITS');

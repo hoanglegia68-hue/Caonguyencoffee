@@ -13,7 +13,6 @@ type DashboardData = {
   paid: number
   debt: number
   kpiCompletion: number
-  series: Array<{ label: string; revenue: number; quantityKg: number; orders: number; visits: number }>
 }
 
 type Shop = {
@@ -91,7 +90,7 @@ type KpiTarget = {
 type User = { user_id: string; username?: string; full_name: string; email?: string; role: string; phone?: string; active?: boolean | string }
 
 const emptyDashboard: DashboardData = {
-  shopCount: 0, visitCount: 0, orderCount: 0, quantityKg: 0, revenue: 0, paid: 0, debt: 0, kpiCompletion: 0, series: [],
+  shopCount: 0, visitCount: 0, orderCount: 0, quantityKg: 0, revenue: 0, paid: 0, debt: 0, kpiCompletion: 0,
 }
 
 const navItems: Array<{ id: View; label: string; icon: IconName; group?: string }> = [
@@ -449,18 +448,11 @@ function Overview({ dashboard, kpiProgress, dateFrom, dateTo, salesFilter, sales
     <PageIntro eyebrow="TỔNG QUAN DOANH NGHIỆP" title="Bức tranh kinh doanh" description="Theo dõi hoạt động bán hàng và hiệu suất đội ngũ theo thời gian thực." />
     <FilterBar dateFrom={dateFrom} dateTo={dateTo} salesFilter={salesFilter} salesUsers={salesUsers} canFilterSales={canFilterSales} onDateFrom={onDateFrom} onDateTo={onDateTo} onSales={onSales} />
     <div className="metrics-grid">{cards.map((card) => <div className="metric-card" key={card.label}><div className={`metric-icon ${card.tone}`}><Icon name={card.icon} size={20} /></div><div className="metric-copy"><span>{card.label}</span><strong>{card.value}</strong><small>{card.meta}</small></div><div className="metric-menu">•••</div></div>)}</div>
-    <div className="overview-grid">
-      <div className="panel chart-panel"><div className="panel-heading"><div><h3>Nhịp vận hành</h3><span>Doanh thu và sản lượng trong kỳ</span></div><span className="legend"><i className="legend-dot revenue" /> Doanh thu <i className="legend-dot kg" /> Sản lượng</span></div><ActivityChart series={dashboard.series} /></div>
+    <div className="overview-grid overview-actions-grid">
       <div className="panel quick-panel"><div className="panel-heading"><div><h3>Thao tác nhanh</h3><span>Cập nhật dữ liệu tại hiện trường</span></div></div><button className="quick-action" onClick={onOpenRoute}><span className="quick-icon route-bg"><Icon name="route" /></span><span><strong>Ghi nhận đi tuyến</strong><small>Check-in tại quán bằng GPS</small></span><Icon name="chevron" size={17} /></button><button className="quick-action" onClick={onOpenOrder}><span className="quick-icon order-bg"><Icon name="cart" /></span><span><strong>Tạo đơn hàng mới</strong><small>Ghi nhận sản lượng bán</small></span><Icon name="chevron" size={17} /></button></div>
     </div>
     <div className="overview-grid bottom-grid"><div className="panel kpi-overview-panel"><div className="panel-heading"><div><h3>Hoàn thành KPI</h3><span>Toàn bộ chỉ số KPI đã khai báo trong hệ thống</span></div><a className="text-link">Xem chi tiết <Icon name="chevron" size={14} /></a></div><KpiProgressList items={kpiProgress} /></div><div className="panel"><div className="panel-heading"><div><h3>Hoạt động gần đây</h3><span>Các cập nhật mới nhất</span></div><a className="text-link">Xem tất cả <Icon name="chevron" size={14} /></a></div><EmptyState icon="file" title="Chưa có hoạt động" description="Dữ liệu sẽ xuất hiện sau khi có lượt ghé hoặc đơn hàng." /></div></div>
   </>
-}
-
-function ActivityChart({ series }: { series: DashboardData['series'] }) {
-  if (!series.length) return <div className="chart-empty"><div className="empty-chart-icon"><Icon name="trend" size={24} /></div><strong>Chưa có dữ liệu trong kỳ</strong><span>Khi có đơn hàng hoặc lượt đi tuyến, biểu đồ sẽ cập nhật tự động.</span></div>
-  const max = Math.max(...series.map((item) => Math.max(item.revenue, item.quantityKg)), 1)
-  return <div className="chart-area"><div className="y-axis"><span>{formatCurrency(max)}</span><span>{formatCurrency(max / 2)}</span><span>0</span></div><div className="bars">{series.map((item) => <div className="bar-group" key={item.label}><div className="bar-pair"><div className="bar revenue-bar" style={{ height: `${Math.max(4, item.revenue / max * 100)}%` }} /><div className="bar kg-bar" style={{ height: `${Math.max(4, item.quantityKg / max * 100)}%` }} /></div><span>{item.label}</span></div>)}</div></div>
 }
 
 function EmptyState({ icon, title, description, action, actionLabel }: { icon: IconName; title: string; description: string; action?: () => void; actionLabel?: string }) {
@@ -469,7 +461,7 @@ function EmptyState({ icon, title, description, action, actionLabel }: { icon: I
 
 function KpiProgressList({ items }: { items: KpiProgress[] }) {
   if (!items.length) return <EmptyState icon="target" title="Chưa có KPI khai báo" description="Admin hãy tạo KPI trong Menu KPI & mục tiêu." />
-  return <div className="kpi-progress-list">{items.map((item) => { const targetNote = item.target_status === 'OUTSIDE_PERIOD' ? ' · Mục tiêu ngoài kỳ lọc' : item.target_count ? ` · ${item.target_count} mục tiêu` : ' · Chưa giao mục tiêu'; return <div className="kpi-progress-row" key={item.kpi_id}><div className="kpi-progress-copy"><strong>{item.kpi_name}</strong><span>{item.actual_value || 0} / {item.target_value || 0} {item.unit || ''}{targetNote}</span></div><div className="kpi-progress-track"><span style={{ width: `${Math.min(100, Number(item.progress || 0))}%` }} /></div><strong className="kpi-progress-value">{Number(item.progress || 0)}%</strong></div> })}</div>
+  return <div className="kpi-progress-list">{items.map((item) => { const targetNote = item.target_status === 'OUTSIDE_PERIOD' ? ' · Đang hiển thị theo kỳ KPI' : item.target_count ? ` · ${item.target_count} mục tiêu` : ' · Chưa giao mục tiêu'; return <div className="kpi-progress-row" key={item.kpi_id}><div className="kpi-progress-copy"><strong>{item.kpi_name}</strong><span>{item.actual_value || 0} / {item.target_value || 0} {item.unit || ''}{targetNote}</span></div><div className="kpi-progress-track"><span style={{ width: `${Math.min(100, Number(item.progress || 0))}%` }} /></div><strong className="kpi-progress-value">{Number(item.progress || 0)}%</strong></div> })}</div>
 }
 
 function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRequestGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onRequestGps: (shop: Shop) => void; onVisit: () => void }) {
