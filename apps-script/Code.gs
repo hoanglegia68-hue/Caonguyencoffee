@@ -455,9 +455,10 @@ function createKpiTarget_(payload) {
   if (!payload.kpi_id || !payload.target_value) throw new Error('Thiếu KPI hoặc chỉ tiêu.');
   const row = normalize_(payload, APP.sheets.KPI_TARGETS);
   row.target_id = row.target_id || id_('TARGET');
-  row.period_type = row.period_type || 'MONTH';
+  row.period_type = String(row.period_type || 'MONTH').trim().toUpperCase();
   row.start_date = row.start_date || date_();
   row.end_date = row.end_date || date_();
+  if (String(row.start_date) > String(row.end_date)) throw new Error('Ngày bắt đầu KPI không được sau ngày kết thúc.');
   row.target_value = Number(row.target_value);
   if (row.target_value <= 0) throw new Error('Chỉ tiêu phải lớn hơn 0.');
   appendRow_('KPI_TARGETS', row);
@@ -524,17 +525,19 @@ function getKpiProgress_(payload) {
     const dateOk = (!payload.dateFrom || !target.end_date || target.end_date >= payload.dateFrom) && (!payload.dateTo || !target.start_date || target.start_date <= payload.dateTo);
     return dateOk;
   });
-  const orders = filterRows_(getRows_('ORDERS'), payload);
-  const visits = filterRows_(getRows_('VISITS'), payload);
-  const records = filterRows_(getRows_('KPI_RECORDS'), payload);
-  const shops = filterRows_(getRows_('SHOPS'), payload);
+  const orders = getRows_('ORDERS');
+  const visits = getRows_('VISITS');
+  const records = getRows_('KPI_RECORDS');
+  const shops = getRows_('SHOPS');
   return definitions.map(function(definition) {
     const definitionTargets = targets.filter(function(target) { return target.kpi_id === definition.kpi_id; });
     const allDefinitionTargets = allTargets.filter(function(target) { return target.kpi_id === definition.kpi_id; });
     const displayTargets = definitionTargets.length ? definitionTargets : allDefinitionTargets;
     const targetValue = displayTargets.reduce(function(total, target) { return total + (Number(target.target_value) || 0); }, 0);
     const target = displayTargets[0] || { kpi_id: definition.kpi_id, user_id: payload.salespersonId || '' };
-    const actual = calculateKpiActual_(definition, target, orders, visits, records, shops);
+    const actual = displayTargets.length ? displayTargets.reduce(function(total, targetRow) {
+      return total + calculateKpiActualForTarget_(definition, targetRow, payload, orders, visits, records, shops);
+    }, 0) : calculateKpiActual_(definition, target, filterRows_(orders, payload), filterRows_(visits, payload), filterRows_(records, payload), filterRows_(shops, payload));
     return Object.assign({}, definition, {
       target_value: targetValue,
       actual_value: Math.round(actual * 100) / 100,
@@ -606,14 +609,14 @@ function calculateKpiCompletion_(payload) {
     return dateOk && ownerOk && Number(target.target_value) > 0;
   });
   if (!targets.length) return 0;
-  const orders = filterRows_(getRows_('ORDERS'), payload);
-  const visits = filterRows_(getRows_('VISITS'), payload);
-  const records = filterRows_(getRows_('KPI_RECORDS'), payload);
-  const shops = filterRows_(getRows_('SHOPS'), payload);
+  const orders = getRows_('ORDERS');
+  const visits = getRows_('VISITS');
+  const records = getRows_('KPI_RECORDS');
+  const shops = getRows_('SHOPS');
   let total = 0;
   targets.forEach(function(target) {
     const definition = definitions[target.kpi_id] || {};
-    const actual = calculateKpiActual_(definition, target, orders, visits, records, shops);
+    const actual = calculateKpiActualForTarget_(definition, target, payload, orders, visits, records, shops);
     total += Math.min(100, actual / Number(target.target_value) * 100);
   });
   return Math.round(total / targets.length);
@@ -636,6 +639,12 @@ function calculateKpiActual_(definition, target, orders, visits, records, shops)
   }
   if (calculation === 'AVG') return scopedRows.length ? sum_(scopedRows, 'quantity_kg') / scopedRows.length : 0;
   return scopedRows.length;
+}
+function calculateKpiActualForTarget_(definition, target, payload, orders, visits, records, shops) {
+  const periodPayload = Object.assign({}, payload || {});
+  if (target.start_date) periodPayload.dateFrom = String(target.start_date).slice(0, 10);
+  if (target.end_date) periodPayload.dateTo = String(target.end_date).slice(0, 10);
+  return calculateKpiActual_(definition, target, filterRows_(orders, periodPayload), filterRows_(visits, periodPayload), filterRows_(records, periodPayload), filterRows_(shops, periodPayload));
 }
 function normalizeKpiSource_(value) {
   const source = String(value || '').trim();

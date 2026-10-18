@@ -193,6 +193,17 @@ function todayInput() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function monthInput(value = todayInput()) {
+  return value.slice(0, 7)
+}
+
+function monthRange(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number)
+  if (!year || !monthNumber) return { start_date: todayInput(), end_date: todayInput() }
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
+  return { start_date: `${year}-${String(monthNumber).padStart(2, '0')}-01`, end_date: `${year}-${String(monthNumber).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}` }
+}
+
 function getDateDaysAgo(days: number) {
   const date = new Date()
   date.setDate(date.getDate() - days)
@@ -205,6 +216,19 @@ function kpiSourceLabel(source?: string) {
   const value = String(source || '').trim().toUpperCase()
   const key = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/Đ/g, 'D').replace(/[^A-Z0-9]+/g, '_')
   return key === 'VISITS' || key === 'VISIT' || key === 'CHECKIN' || key === 'CHECK_IN' || key === 'DI_TUYEN' ? 'Đi tuyến / Check-in' : key === 'ORDERS' || key === 'ORDER' || key === 'DON_HANG' ? 'Đơn hàng' : key === 'SHOPS' || key === 'SHOP' || key === 'DANH_SACH_QUAN' ? 'Danh sách quán' : key === 'KPI_RECORDS' || key === 'KPI_RECORD' || key === 'MANUAL' || key === 'KPI_THU_CONG' ? 'KPI thủ công' : value || 'Chưa cấu hình'
+}
+
+function kpiPeriodLabel(target: KpiTarget) {
+  const period = String(target.period_type || '').toUpperCase()
+  const start = target.start_date || ''
+  const end = target.end_date || ''
+  if (period === 'MONTH' && start && end && monthInput(start) === monthInput(end)) {
+    const [year, month] = monthInput(start).split('-')
+    return `Tháng ${month}/${year}`
+  }
+  if (period === 'DAY' && start) return `Ngày ${formatDate(start)}`
+  if (start && end) return `${formatDate(start)} – ${formatDate(end)}`
+  return 'Chưa chọn thời gian'
 }
 
 function App() {
@@ -567,7 +591,7 @@ function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDat
 }
 
 function KpiView({ kpis, kpiTargets, canManage, onAdd, onEdit, onAssign }: { kpis: Kpi[]; kpiTargets: KpiTarget[]; canManage: boolean; onAdd: () => void; onEdit: (kpi: Kpi) => void; onAssign: () => void }) {
-  return <><PageIntro eyebrow="HIỆU SUẤT" title="KPI & mục tiêu" description="Thiết lập chỉ tiêu linh hoạt cho Sales, nhóm hoặc toàn công ty." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI" actionIcon="target" /><div className="kpi-info"><div className="kpi-info-icon"><Icon name="target" size={20} /></div><div><strong>KPI được thiết kế mở rộng</strong><span>Sales chỉ xem KPI của mình; Admin có quyền tạo, sửa và giao mục tiêu.</span></div>{canManage && <button className="secondary-button" onClick={onAssign}><Icon name="users" size={15} /> Giao KPI cho Sales</button>}</div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên KPI</th><th>Đơn vị</th><th>Nguồn lấy</th><th>Cách tính</th><th>Trạng thái</th><th>Đã giao</th><th>Mục tiêu kỳ hiện tại</th><th /></tr></thead><tbody>{kpis.map((kpi) => { const targets = kpiTargets.filter((target) => target.kpi_id === kpi.kpi_id); return <tr key={kpi.kpi_id}><td><div className="kpi-name"><span className="kpi-bullet" /><strong>{kpi.kpi_name}</strong><small>{kpi.kpi_code || kpi.kpi_id}</small></div></td><td>{kpi.unit}</td><td><span className="source-badge">{kpiSourceLabel(kpi.data_source)}</span></td><td><span className="formula-badge">{kpi.calculation_type}</span></td><td><StatusBadge status={String(kpi.active) === 'false' ? 'Tạm tắt' : 'Đang áp dụng'} /></td><td>{targets.length ? `${targets.length} người` : 'Chưa giao'}</td><td>{targets.length ? targets.map((target) => `${target.target_value || 0} ${kpi.unit}`).join(', ') : '—'}</td><td>{canManage ? <button className="table-action" onClick={() => onEdit(kpi)}>Sửa</button> : '—'}</td></tr> })}</tbody></table>{kpis.length === 0 && <EmptyState icon="target" title="Chưa có KPI" description="Admin cần tạo KPI để bắt đầu đo lường hiệu suất đội ngũ." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI đầu tiên" />}</div></div></>
+  return <><PageIntro eyebrow="HIỆU SUẤT" title="KPI & mục tiêu" description="Thiết lập chỉ tiêu linh hoạt cho Sales, nhóm hoặc toàn công ty." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI" actionIcon="target" /><div className="kpi-info"><div className="kpi-info-icon"><Icon name="target" size={20} /></div><div><strong>KPI được thiết kế mở rộng</strong><span>Sales chỉ xem KPI của mình; Admin có quyền tạo, sửa và giao mục tiêu theo từng kỳ.</span></div>{canManage && <button className="secondary-button" onClick={onAssign}><Icon name="users" size={15} /> Giao KPI cho Sales</button>}</div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên KPI</th><th>Đơn vị</th><th>Nguồn lấy</th><th>Cách tính</th><th>Thời gian thực hiện</th><th>Trạng thái</th><th>Đã giao</th><th>Mục tiêu</th><th /></tr></thead><tbody>{kpis.map((kpi) => { const targets = kpiTargets.filter((target) => target.kpi_id === kpi.kpi_id); return <tr key={kpi.kpi_id}><td><div className="kpi-name"><span className="kpi-bullet" /><strong>{kpi.kpi_name}</strong><small>{kpi.kpi_code || kpi.kpi_id}</small></div></td><td>{kpi.unit}</td><td><span className="source-badge">{kpiSourceLabel(kpi.data_source)}</span></td><td><span className="formula-badge">{kpi.calculation_type}</span></td><td>{targets.length ? <div className="kpi-period-list">{targets.map((target) => <span key={target.target_id}>{kpiPeriodLabel(target)}</span>)}</div> : '—'}</td><td><StatusBadge status={String(kpi.active) === 'false' ? 'Tạm tắt' : 'Đang áp dụng'} /></td><td>{targets.length ? `${targets.length} người` : 'Chưa giao'}</td><td>{targets.length ? <div className="kpi-period-list">{targets.map((target) => <span key={target.target_id}>{target.target_value || 0} {kpi.unit}</span>)}</div> : '—'}</td><td>{canManage ? <button className="table-action" onClick={() => onEdit(kpi)}>Sửa</button> : '—'}</td></tr> })}</tbody></table>{kpis.length === 0 && <EmptyState icon="target" title="Chưa có KPI" description="Admin cần tạo KPI để bắt đầu đo lường hiệu suất đội ngũ." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI đầu tiên" />}</div></div></>
 }
 
 function ReportsView({ dateFrom, dateTo, salesFilter, showToast }: { dateFrom: string; dateTo: string; salesFilter: string; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
@@ -654,17 +678,36 @@ function KpiModal({ kpi, onClose, onSaved, showToast }: { kpi?: Kpi; onClose: ()
 
 function KpiTargetModal({ kpis, users, onClose, onSaved, showToast }: { kpis: Kpi[]; users: User[]; onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
   const salesUsers = users.filter((user) => String(user.role).toLowerCase() === 'sales' && String(user.active) !== 'false')
-  const [form, setForm] = useState({ kpi_id: '', user_id: '', role: 'SALES', period_type: 'MONTH', start_date: todayInput(), end_date: todayInput(), target_value: '' })
+  const defaultMonth = monthInput()
+  const defaultRange = monthRange(defaultMonth)
+  const [periodMonth, setPeriodMonth] = useState(defaultMonth)
+  const [form, setForm] = useState({ kpi_id: '', user_id: '', role: 'SALES', period_type: 'MONTH', start_date: defaultRange.start_date, end_date: defaultRange.end_date, target_value: '' })
   const [saving, setSaving] = useState(false)
+  const changePeriodType = (periodType: string) => {
+    if (periodType === 'MONTH') {
+      const range = monthRange(periodMonth)
+      setForm((current) => ({ ...current, period_type: periodType, start_date: range.start_date, end_date: range.end_date }))
+    } else if (periodType === 'DAY') {
+      setForm((current) => ({ ...current, period_type: periodType, end_date: current.start_date }))
+    } else {
+      setForm((current) => ({ ...current, period_type: periodType }))
+    }
+  }
+  const changeMonth = (value: string) => {
+    setPeriodMonth(value)
+    const range = monthRange(value)
+    setForm((current) => ({ ...current, period_type: 'MONTH', start_date: range.start_date, end_date: range.end_date }))
+  }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!form.kpi_id || !form.target_value) return showToast('Vui lòng chọn KPI và nhập chỉ tiêu', 'error')
+    if (!form.start_date || !form.end_date || form.start_date > form.end_date) return showToast('Vui lòng chọn đúng thời gian thực hiện KPI', 'error')
     setSaving(true)
     try { await apiRequest('createKpiTarget', { ...form, target_value: Number(form.target_value) }); onSaved() }
     catch (error) { showToast(error instanceof Error ? error.message : 'Không thể giao KPI', 'error') }
     finally { setSaving(false) }
   }
-  return <Modal eyebrow="HIỆU SUẤT" title="Giao KPI cho Sales" onClose={onClose}><form className="modal-form" onSubmit={submit}><div className="form-grid"><label className="field wide"><span>KPI <b>*</b></span><select autoFocus value={form.kpi_id} onChange={(event) => setForm({ ...form, kpi_id: event.target.value })}><option value="">Chọn KPI</option>{kpis.map((kpi) => <option key={kpi.kpi_id} value={kpi.kpi_id}>{kpi.kpi_name} ({kpi.unit})</option>)}</select></label><label className="field wide"><span>Sales áp dụng</span><select value={form.user_id} onChange={(event) => setForm({ ...form, user_id: event.target.value })}><option value="">Toàn bộ Sales / theo vai trò</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select></label><label className="field"><span>Chu kỳ</span><select value={form.period_type} onChange={(event) => setForm({ ...form, period_type: event.target.value })}><option value="DAY">Ngày</option><option value="WEEK">Tuần</option><option value="MONTH">Tháng</option></select></label><label className="field"><span>Chỉ tiêu <b>*</b></span><input type="number" min="0" step="0.1" value={form.target_value} onChange={(event) => setForm({ ...form, target_value: event.target.value })} /></label><label className="field"><span>Từ ngày</span><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label><label className="field"><span>Đến ngày</span><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu mục tiêu'}</button></div></form></Modal>
+  return <Modal eyebrow="HIỆU SUẤT" title="Giao KPI cho Sales" onClose={onClose}><form className="modal-form" onSubmit={submit}><div className="form-grid"><label className="field wide"><span>KPI <b>*</b></span><select autoFocus value={form.kpi_id} onChange={(event) => setForm({ ...form, kpi_id: event.target.value })}><option value="">Chọn KPI</option>{kpis.map((kpi) => <option key={kpi.kpi_id} value={kpi.kpi_id}>{kpi.kpi_name} ({kpi.unit})</option>)}</select></label><label className="field wide"><span>Sales áp dụng</span><select value={form.user_id} onChange={(event) => setForm({ ...form, user_id: event.target.value })}><option value="">Toàn bộ Sales / theo vai trò</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select></label><label className="field"><span>Chu kỳ thực hiện <b>*</b></span><select value={form.period_type} onChange={(event) => changePeriodType(event.target.value)}><option value="DAY">Ngày</option><option value="WEEK">Tuần</option><option value="MONTH">Tháng</option></select></label><label className="field"><span>Chỉ tiêu <b>*</b></span><input type="number" min="0" step="0.1" value={form.target_value} onChange={(event) => setForm({ ...form, target_value: event.target.value })} /></label>{form.period_type === 'MONTH' && <label className="field wide"><span>Tháng thực hiện <b>*</b></span><input type="month" value={periodMonth} onChange={(event) => changeMonth(event.target.value)} /><small className="field-hint">Hệ thống tự tính từ ngày đầu đến ngày cuối của tháng đã chọn.</small></label>}<label className="field"><span>Từ ngày <b>*</b></span><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value, end_date: form.period_type === 'DAY' ? event.target.value : form.end_date })} /></label><label className="field"><span>Đến ngày <b>*</b></span><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} /></label></div><div className="kpi-form-help">KPI Check-in sẽ đếm dữ liệu trong đúng kỳ này; KPI Kg bán sẽ cộng số lượng đơn hàng trong đúng kỳ này.</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu mục tiêu'}</button></div></form></Modal>
 }
 
 export default App
