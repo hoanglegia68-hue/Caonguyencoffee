@@ -64,6 +64,8 @@ Sau đó redeploy. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển
 - Thư mục Drive gốc đang dùng là thư mục đã cấu hình trong `apps-script/Code.gs`; không cần mở thư mục từ giao diện.
 - GPS dạng `10.989.025` được chuẩn hóa thành `10.989025` trước khi tính khoảng cách và tạo liên kết Google Maps.
 - GPS được lấy tại Menu Danh sách quán và khóa sau khi lưu. Admin có nút **Cấp sửa GPS**; quyền chỉ dùng được cho một lần cập nhật rồi tự khóa lại.
+- Sales có nút **Xin sửa GPS** khi GPS đã khóa; Admin phê duyệt yêu cầu tại Danh sách quán. Sau khi Sales lưu GPS mới, quyền tự khóa lại.
+- Ảnh quán mới được cấp quyền xem bằng liên kết để thumbnail hiển thị được trên điện thoại; người dùng cần triển khai lại Apps Script sau khi cập nhật mã.
 - Menu Đi tuyến chỉ có check-in. Check-in hợp lệ khi khoảng cách tới GPS quán không quá 50 m và được dùng để tính KPI tuyến.
 - Các thông tin nhạy cảm không được đặt trong frontend hoặc commit vào Git.
 

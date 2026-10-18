@@ -36,8 +36,11 @@ type Shop = {
   status?: string
   gps_locked?: boolean | string
   gps_edit_granted?: boolean | string
+  gps_edit_requested?: boolean | string
   photo_file_id?: string
   photo_url?: string
+  photo_thumbnail_url?: string
+  photo_direct_url?: string
 }
 
 type Order = {
@@ -59,6 +62,13 @@ type Kpi = {
   unit: string
   calculation_type: string
   active: boolean | string
+}
+
+type KpiProgress = Kpi & {
+  target_value?: number
+  actual_value?: number
+  progress?: number
+  target_count?: number
 }
 
 type KpiTarget = {
@@ -168,6 +178,7 @@ function shopMapUrl(shop: Shop) {
 }
 
 function shopThumbnailUrl(shop: Shop) {
+  if (shop.photo_thumbnail_url) return shop.photo_thumbnail_url
   if (shop.photo_file_id) return `https://drive.google.com/thumbnail?id=${encodeURIComponent(shop.photo_file_id)}&sz=w240`
   return shop.photo_url || ''
 }
@@ -199,6 +210,7 @@ function App() {
   const [shops, setShops] = useState<Shop[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [kpis, setKpis] = useState<Kpi[]>([])
+  const [kpiProgress, setKpiProgress] = useState<KpiProgress[]>([])
   const [kpiTargets, setKpiTargets] = useState<KpiTarget[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
@@ -232,11 +244,12 @@ function App() {
       const orderDateFrom = activeView === 'payments' ? paymentDateFrom : dateFrom
       const orderDateTo = activeView === 'payments' ? paymentDateTo : dateTo
       const orderSalesFilter = activeView === 'payments' && isAdmin && paymentSalesFilter !== 'all' ? paymentSalesFilter : selectedSales
-      const [dashboardResult, shopsResult, ordersResult, kpisResult, usersResult, kpiTargetsResult] = await Promise.all([
+      const [dashboardResult, shopsResult, ordersResult, kpisResult, kpiProgressResult, usersResult, kpiTargetsResult] = await Promise.all([
         apiRequest<DashboardData>('getDashboard', { dateFrom, dateTo, salespersonId: selectedSales }),
         apiRequest<Shop[]>('getShops', { dateFrom, dateTo, salespersonId: selectedSales }),
         apiRequest<Order[]>('getOrders', { dateFrom: orderDateFrom, dateTo: orderDateTo, salespersonId: orderSalesFilter }),
         apiRequest<Kpi[]>('getKpis', {}),
+        apiRequest<KpiProgress[]>('getKpiProgress', { dateFrom, dateTo, salespersonId: selectedSales }),
         apiRequest<User[]>('getUsers', {}),
         apiRequest<KpiTarget[]>('getKpiTargets', {}),
       ])
@@ -244,6 +257,7 @@ function App() {
       setShops(Array.isArray(shopsResult) ? shopsResult : [])
       setOrders(Array.isArray(ordersResult) ? ordersResult : [])
       setKpis(Array.isArray(kpisResult) ? kpisResult : [])
+      setKpiProgress(Array.isArray(kpiProgressResult) ? kpiProgressResult : [])
       setKpiTargets(Array.isArray(kpiTargetsResult) ? kpiTargetsResult : [])
       setUsers(Array.isArray(usersResult) ? usersResult : [])
       setConnected(true)
@@ -311,6 +325,10 @@ function App() {
     try { await apiRequest('grantGpsEdit', { shop_id: shop.shop_id }); showToast('Đã cấp quyền sửa GPS một lần cho quán'); void loadData() }
     catch (error) { showToast(error instanceof Error ? error.message : 'Không thể cấp quyền sửa GPS', 'error') }
   }
+  const requestGpsEdit = async (shop: Shop) => {
+    try { await apiRequest('requestGpsEdit', { shop_id: shop.shop_id }); showToast('Đã gửi yêu cầu sửa GPS cho Admin'); void loadData() }
+    catch (error) { showToast(error instanceof Error ? error.message : 'Không thể gửi yêu cầu sửa GPS', 'error') }
+  }
 
   return (
     <div className="app-shell">
@@ -340,8 +358,8 @@ function App() {
       <main className="main-content">
         <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Mở menu"><Icon name="menu" /></button><div><div className="eyebrow">QUẢN TRỊ VẬN HÀNH</div><h1>{title}</h1></div></div><div className="topbar-actions"><div className={`connection-pill ${connected ? 'connected' : 'disconnected'}`}><span className="status-dot" /> {connected ? 'Đã kết nối' : 'Offline'}</div><button className="icon-button" onClick={() => void loadData()} disabled={loading} aria-label="Làm mới"><Icon name="refresh" /></button><div className="topbar-date"><Icon name="calendar" size={16} /> <span>{formatDate(todayInput())}</span></div></div></header>
         <div className="content-wrap">
-          {activeView === 'overview' && <Overview dashboard={dashboard} dateFrom={dateFrom} dateTo={dateTo} salesFilter={salesFilter} salesUsers={salesUsers} canFilterSales={isAdmin} onDateFrom={setDateFrom} onDateTo={setDateTo} onSales={setSalesFilter} onOpenRoute={() => onNavigate('routes')} onOpenOrder={() => onNavigate('orders')} />}
-          {activeView === 'shops' && <ShopsView shops={shops} salesUsers={salesUsers} isAdmin={isAdmin} onAdd={() => { setEditingShop(null); setModal('shop') }} onEdit={(shop) => { setEditingShop(shop); setModal('shop') }} onGrantGps={grantGpsEdit} onVisit={() => setModal('visit')} />}
+          {activeView === 'overview' && <Overview dashboard={dashboard} kpiProgress={kpiProgress} dateFrom={dateFrom} dateTo={dateTo} salesFilter={salesFilter} salesUsers={salesUsers} canFilterSales={isAdmin} onDateFrom={setDateFrom} onDateTo={setDateTo} onSales={setSalesFilter} onOpenRoute={() => onNavigate('routes')} onOpenOrder={() => onNavigate('orders')} />}
+          {activeView === 'shops' && <ShopsView shops={shops} salesUsers={salesUsers} isAdmin={isAdmin} onAdd={() => { setEditingShop(null); setModal('shop') }} onEdit={(shop) => { setEditingShop(shop); setModal('shop') }} onGrantGps={grantGpsEdit} onRequestGps={requestGpsEdit} onVisit={() => setModal('visit')} />}
           {activeView === 'routes' && <RoutesView shops={shops} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onSaved={() => { setModal(null); void loadData() }} showToast={showToast} />}
           {activeView === 'orders' && <OrdersView orders={orders} shops={shops} canCreate={isAdmin || isSales} onAdd={() => setModal('order')} />}
           {activeView === 'payments' && <PaymentsView orders={orders} salesUsers={paymentSalesUsers} dateFrom={paymentDateFrom} dateTo={paymentDateTo} salesFilter={paymentSalesFilter} onDateFrom={setPaymentDateFrom} onDateTo={setPaymentDateTo} onSales={setPaymentSalesFilter} onConfirm={async (order) => { try { await apiRequest('confirmPayment', { order_id: order.order_id, amount: order.total_amount, payment_method: 'Chuyển khoản' }); showToast('Đã xác nhận thanh toán'); void loadData() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xác nhận thanh toán', 'error') } }} />}
@@ -384,7 +402,7 @@ function FilterBar({ dateFrom, dateTo, salesFilter, salesUsers, canFilterSales, 
   return <div className="filter-bar"><div className="filter-label"><Icon name="calendar" size={16} /> Kỳ báo cáo</div><input aria-label="Từ ngày" type="date" value={dateFrom} onChange={(event) => onDateFrom(event.target.value)} /><span className="date-separator">đến</span><input aria-label="Đến ngày" type="date" value={dateTo} onChange={(event) => onDateTo(event.target.value)} />{canFilterSales && <><div className="filter-spacer" /><label className="select-with-icon"><Icon name="users" size={16} /><select value={salesFilter} onChange={(event) => onSales(event.target.value)}><option value="all">Tất cả Sales</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select><Icon name="chevron" size={14} /></label></>}</div>
 }
 
-function Overview({ dashboard, dateFrom, dateTo, salesFilter, salesUsers, canFilterSales, onDateFrom, onDateTo, onSales, onOpenRoute, onOpenOrder }: { dashboard: DashboardData; dateFrom: string; dateTo: string; salesFilter: string; salesUsers: User[]; canFilterSales: boolean; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onOpenRoute: () => void; onOpenOrder: () => void }) {
+function Overview({ dashboard, kpiProgress, dateFrom, dateTo, salesFilter, salesUsers, canFilterSales, onDateFrom, onDateTo, onSales, onOpenRoute, onOpenOrder }: { dashboard: DashboardData; kpiProgress: KpiProgress[]; dateFrom: string; dateTo: string; salesFilter: string; salesUsers: User[]; canFilterSales: boolean; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onOpenRoute: () => void; onOpenOrder: () => void }) {
   const cards = [
     { label: 'Tổng doanh thu', value: `${formatCurrency(dashboard.revenue)} đ`, meta: 'Trong kỳ đã chọn', icon: 'trend' as IconName, tone: 'green' },
     { label: 'Sản lượng bán', value: `${dashboard.quantityKg || 0} kg`, meta: 'Tổng khối lượng', icon: 'cart' as IconName, tone: 'orange' },
@@ -399,7 +417,7 @@ function Overview({ dashboard, dateFrom, dateTo, salesFilter, salesUsers, canFil
       <div className="panel chart-panel"><div className="panel-heading"><div><h3>Nhịp vận hành</h3><span>Doanh thu và sản lượng trong kỳ</span></div><span className="legend"><i className="legend-dot revenue" /> Doanh thu <i className="legend-dot kg" /> Sản lượng</span></div><ActivityChart series={dashboard.series} /></div>
       <div className="panel quick-panel"><div className="panel-heading"><div><h3>Thao tác nhanh</h3><span>Cập nhật dữ liệu tại hiện trường</span></div></div><button className="quick-action" onClick={onOpenRoute}><span className="quick-icon route-bg"><Icon name="route" /></span><span><strong>Ghi nhận đi tuyến</strong><small>Check-in tại quán bằng GPS</small></span><Icon name="chevron" size={17} /></button><button className="quick-action" onClick={onOpenOrder}><span className="quick-icon order-bg"><Icon name="cart" /></span><span><strong>Tạo đơn hàng mới</strong><small>Ghi nhận sản lượng bán</small></span><Icon name="chevron" size={17} /></button></div>
     </div>
-    <div className="overview-grid bottom-grid"><div className="panel"><div className="panel-heading"><div><h3>Hiệu suất KPI</h3><span>Tiến độ các chỉ tiêu đang áp dụng</span></div><a className="text-link">Xem chi tiết <Icon name="chevron" size={14} /></a></div><EmptyState icon="target" title="Chưa có dữ liệu KPI" description="Khi Admin thiết lập mục tiêu, tiến độ sẽ hiển thị tại đây." /></div><div className="panel"><div className="panel-heading"><div><h3>Hoạt động gần đây</h3><span>Các cập nhật mới nhất</span></div><a className="text-link">Xem tất cả <Icon name="chevron" size={14} /></a></div><EmptyState icon="file" title="Chưa có hoạt động" description="Dữ liệu sẽ xuất hiện sau khi có lượt ghé hoặc đơn hàng." /></div></div>
+    <div className="overview-grid bottom-grid"><div className="panel kpi-overview-panel"><div className="panel-heading"><div><h3>Hoàn thành KPI</h3><span>Toàn bộ chỉ số KPI đã khai báo trong hệ thống</span></div><a className="text-link">Xem chi tiết <Icon name="chevron" size={14} /></a></div><KpiProgressList items={kpiProgress} /></div><div className="panel"><div className="panel-heading"><div><h3>Hoạt động gần đây</h3><span>Các cập nhật mới nhất</span></div><a className="text-link">Xem tất cả <Icon name="chevron" size={14} /></a></div><EmptyState icon="file" title="Chưa có hoạt động" description="Dữ liệu sẽ xuất hiện sau khi có lượt ghé hoặc đơn hàng." /></div></div>
   </>
 }
 
@@ -413,19 +431,28 @@ function EmptyState({ icon, title, description, action, actionLabel }: { icon: I
   return <div className="empty-state"><div className="empty-icon"><Icon name={icon} size={24} /></div><strong>{title}</strong><span>{description}</span>{action && actionLabel && <button className="secondary-button" onClick={action}>{actionLabel}</button>}</div>
 }
 
-function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onVisit: () => void }) {
+function KpiProgressList({ items }: { items: KpiProgress[] }) {
+  if (!items.length) return <EmptyState icon="target" title="Chưa có KPI khai báo" description="Admin hãy tạo KPI trong Menu KPI & mục tiêu." />
+  return <div className="kpi-progress-list">{items.map((item) => <div className="kpi-progress-row" key={item.kpi_id}><div className="kpi-progress-copy"><strong>{item.kpi_name}</strong><span>{item.actual_value || 0} / {item.target_value || 0} {item.unit || ''}{item.target_count ? ` · ${item.target_count} mục tiêu` : ' · Chưa giao mục tiêu'}</span></div><div className="kpi-progress-track"><span style={{ width: `${Math.min(100, Number(item.progress || 0))}%` }} /></div><strong className="kpi-progress-value">{Number(item.progress || 0)}%</strong></div>)}</div>
+}
+
+function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRequestGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onRequestGps: (shop: Shop) => void; onVisit: () => void }) {
   return <>
     <PageIntro eyebrow="KHÁCH HÀNG" title="Danh sách quán" description="Hồ sơ quán, GPS cố định, ảnh nhận diện và giá trị kinh doanh theo từng điểm bán." action={onAdd} actionLabel="Thêm quán" />
     <div className="table-toolbar"><div className="search-field"><Icon name="search" size={17} /><input placeholder="Tìm theo tên quán, địa chỉ..." /><span>{shops.length} kết quả</span></div><button className="secondary-button" onClick={onVisit}><Icon name="route" size={16} /> Ghi nhận check-in</button></div>
     <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh quán</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{shops.map((shop) => {
       const mapUrl = shopMapUrl(shop)
       const thumbnailUrl = shopThumbnailUrl(shop)
+      const photoUrl = shop.photo_direct_url || shop.photo_url || thumbnailUrl
+      const gpsLocked = String(shop.gps_locked) === 'true'
+      const gpsGranted = String(shop.gps_edit_granted) === 'true'
+      const gpsRequested = String(shop.gps_edit_requested) === 'true'
       return <tr key={shop.shop_id}>
         <td><div className="shop-cell"><div className="shop-avatar">{shop.shop_name?.slice(0, 1).toUpperCase() || 'Q'}</div><div><strong>{shop.shop_name || 'Chưa đặt tên'}</strong><small>{shop.status || 'Đang hoạt động'}{String(shop.gps_locked) === 'true' ? ' · GPS đã khóa' : ' · Chưa có GPS'}</small></div></div></td>
         <td><div className="address-cell">{shop.address || 'Chưa cập nhật'}{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer"><Icon name="map" size={13} /> Mở bản đồ</a>}</div></td>
-        <td>{thumbnailUrl ? <a className="photo-preview" href={shop.photo_url || thumbnailUrl} target="_blank" rel="noreferrer" title="Mở ảnh quán"><img className="photo-thumb" src={thumbnailUrl} alt={`Ảnh ${shop.shop_name || 'quán'}`} loading="lazy" /><span>Xem ảnh</span></a> : <span className="photo-missing">Chưa có</span>}</td>
+        <td>{thumbnailUrl ? <a className="photo-preview" href={photoUrl} target="_blank" rel="noreferrer" title="Mở ảnh quán"><img className="photo-thumb" src={thumbnailUrl} alt={`Ảnh ${shop.shop_name || 'quán'}`} loading="lazy" onError={(event) => { event.currentTarget.classList.add('photo-thumb-error') }} /><span>Xem ảnh</span></a> : <span className="photo-missing">Chưa có</span>}</td>
         <td>{shop.salesperson_name || salesUsers.find((user) => user.user_id === shop.salesperson_id)?.full_name || 'Chưa phân công'}</td><td>{formatCurrency(shop.revenue)} đ</td><td>{shop.avg_monthly_orders || 0}</td><td>{formatDate(shop.last_order_at)}</td><td>{formatDate(shop.last_visit_at)}</td>
-        <td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && String(shop.gps_locked) === 'true' && String(shop.gps_edit_granted) !== 'true' && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Cấp sửa GPS</button>}{isAdmin && String(shop.gps_edit_granted) === 'true' && <span className="gps-granted">Đã cấp</span>}</td>
+        <td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && gpsLocked && !gpsGranted && gpsRequested && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Phê duyệt GPS</button>}{isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <span className="gps-not-requested">Chưa xin</span>}{!isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <button className="table-action gps-request" onClick={() => onRequestGps(shop)}>Xin sửa GPS</button>}{!isAdmin && gpsRequested && <span className="gps-requested">Đã gửi yêu cầu</span>}{gpsGranted && <span className="gps-granted">Đã cấp</span>}</td>
       </tr>
     })}</tbody></table>{shops.length === 0 && <EmptyState icon="store" title="Chưa có hồ sơ quán" description="Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng." action={onAdd} actionLabel="Thêm quán đầu tiên" />}</div></div>
   </>

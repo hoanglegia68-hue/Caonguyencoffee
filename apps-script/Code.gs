@@ -12,7 +12,7 @@ const APP = {
   timeZone: 'Asia/Ho_Chi_Minh',
   sheets: {
     USERS: ['user_id', 'email', 'full_name', 'role', 'phone', 'active', 'username', 'password', 'password_hash'],
-    SHOPS: ['shop_id', 'shop_name', 'address', 'latitude', 'longitude', 'phone', 'contact_name', 'current_supplier', 'salesperson_id', 'status', 'notes', 'created_at', 'updated_at', 'gps_locked', 'gps_edit_granted', 'photo_file_id', 'photo_url'],
+    SHOPS: ['shop_id', 'shop_name', 'address', 'latitude', 'longitude', 'phone', 'contact_name', 'current_supplier', 'salesperson_id', 'status', 'notes', 'created_at', 'updated_at', 'gps_locked', 'gps_edit_granted', 'photo_file_id', 'photo_url', 'gps_edit_requested'],
     VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'created_at', 'checkin_latitude', 'checkin_longitude', 'distance_meters', 'checkin_verified'],
     ORDERS: ['order_id', 'shop_id', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status', 'notes', 'created_at'],
     PAYMENTS: ['payment_id', 'order_id', 'shop_id', 'accountant_id', 'paid_date', 'amount', 'payment_method', 'status', 'notes'],
@@ -64,6 +64,7 @@ function route_(action, payload, user) {
     case 'getShopDetail': return getShopDetail_(payload);
     case 'createShop': return createShop_(payload, user);
     case 'updateShop': return updateShop_(payload, user);
+    case 'requestGpsEdit': return requestGpsEdit_(payload, user);
     case 'grantGpsEdit': return grantGpsEdit_(payload);
     case 'uploadShopPhoto': return uploadShopPhoto_(payload, user);
     case 'checkIn': return checkIn_(payload, user);
@@ -74,6 +75,7 @@ function route_(action, payload, user) {
     case 'updateOrder': return updateOrder_(payload, user);
     case 'confirmPayment': return confirmPayment_(payload);
     case 'getKpis': return getRows_('KPI_DEFINITIONS');
+    case 'getKpiProgress': return getKpiProgress_(payload);
     case 'getKpiTargets': return getKpiTargets_(payload);
     case 'createKpi': return createKpi_(payload);
     case 'createKpiTarget': return createKpiTarget_(payload);
@@ -95,10 +97,10 @@ function authorize_(action, payload) {
   const role = role_(user);
   const permissions = {
     getDashboard: ['admin', 'sales'], getShops: ['admin', 'sales'], getShopDetail: ['admin', 'sales'],
-    getOrders: ['admin', 'sales', 'accountant', 'kế toán'], getKpis: ['admin', 'sales'],
+    getOrders: ['admin', 'sales', 'accountant', 'kế toán'], getKpis: ['admin', 'sales'], getKpiProgress: ['admin', 'sales'],
     getKpiTargets: ['admin', 'sales'], getReports: ['admin', 'sales'], exportReportXlsx: ['admin', 'sales'],
     getUsers: ['admin', 'sales'], createShop: ['admin', 'sales'], updateShop: ['admin', 'sales'],
-    grantGpsEdit: ['admin'], uploadShopPhoto: ['admin', 'sales'], checkIn: ['admin', 'sales'],
+    requestGpsEdit: ['sales'], grantGpsEdit: ['admin'], uploadShopPhoto: ['admin', 'sales'], checkIn: ['admin', 'sales'],
     createVisit: ['admin', 'sales'], uploadVisitPhoto: ['admin', 'sales'], createOrder: ['admin', 'sales'],
     updateOrder: ['admin', 'sales'], confirmPayment: ['admin', 'accountant', 'kế toán'],
     createKpi: ['admin'], createKpiTarget: ['admin'], updateKpi: ['admin'], updateKpiTarget: ['admin']
@@ -174,9 +176,9 @@ function initializeSchema_() {
 
 function ensureSchema_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('SCHEMA_READY_V2') === '1') return;
+  if (cache.get('SCHEMA_READY_V3') === '1') return;
   initializeSchema_();
-  cache.put('SCHEMA_READY_V2', '1', 21600);
+  cache.put('SCHEMA_READY_V3', '1', 21600);
 }
 
 function getConfig_() {
@@ -197,6 +199,7 @@ function getShops_(payload) {
   const visits = getRows_('VISITS');
   const users = indexBy_(getRows_('USERS'), 'user_id');
   return shops.map(function(shop) {
+    if (shop.photo_file_id) ensurePhotoPreviewAccess_(shop.photo_file_id);
     const normalizedShop = Object.assign({}, shop);
     const latitude = parseCoordinate_(shop.latitude);
     const longitude = parseCoordinate_(shop.longitude);
@@ -207,6 +210,8 @@ function getShops_(payload) {
     const revenue = sum_(shopOrders, 'total_amount');
     return Object.assign({}, normalizedShop, {
       salesperson_name: users[shop.salesperson_id] ? users[shop.salesperson_id].full_name : '',
+      photo_thumbnail_url: shop.photo_file_id ? driveThumbnailUrl_(shop.photo_file_id) : '',
+      photo_direct_url: shop.photo_file_id ? driveViewUrl_(shop.photo_file_id) : '',
       revenue: revenue,
       avg_monthly_revenue: averageMonthly_(orders.filter(function(order) { return order.shop_id === shop.shop_id; }), 'total_amount'),
       avg_monthly_orders: averageMonthlyCount_(orders.filter(function(order) { return order.shop_id === shop.shop_id; })),
@@ -234,6 +239,7 @@ function createShop_(payload, user) {
   row.status = row.status || 'Đang hoạt động';
   row.gps_locked = true;
   row.gps_edit_granted = false;
+  row.gps_edit_requested = false;
   row.created_at = now_();
   row.updated_at = now_();
   appendRow_('SHOPS', row);
@@ -258,13 +264,26 @@ function updateShop_(payload, user) {
     changes.longitude = incomingLongitude;
   }
   if (role_(user) === 'sales') changes.salesperson_id = user.user_id;
-  if (gpsChanged) { changes.gps_locked = true; changes.gps_edit_granted = false; }
+  if (gpsChanged) { changes.gps_locked = true; changes.gps_edit_granted = false; changes.gps_edit_requested = false; }
   return updateRow_('SHOPS', changes, 'shop_id');
+}
+
+function requestGpsEdit_(payload, user) {
+  if (!payload.shop_id) throw new Error('Thiếu shop_id.');
+  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  if (!shop) throw new Error('Không tìm thấy quán.');
+  if (role_(user) !== 'sales' || shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được xin sửa GPS quán do mình phụ trách.');
+  if (String(shop.gps_locked) !== 'true') throw new Error('Quán này chưa khóa GPS, bạn có thể cập nhật GPS trực tiếp.');
+  if (String(shop.gps_edit_granted) === 'true') throw new Error('Quán đã được Admin cấp quyền sửa GPS.');
+  if (String(shop.gps_edit_requested) === 'true') throw new Error('Yêu cầu sửa GPS đã được gửi và đang chờ Admin phê duyệt.');
+  const result = updateRow_('SHOPS', { shop_id: payload.shop_id, gps_edit_requested: true, updated_at: now_() }, 'shop_id');
+  audit_('requestGpsEdit', payload.shop_id, { user_id: user.user_id });
+  return result;
 }
 
 function grantGpsEdit_(payload) {
   if (!payload.shop_id) throw new Error('Thiếu shop_id.');
-  return updateRow_('SHOPS', { shop_id: payload.shop_id, gps_edit_granted: true }, 'shop_id');
+  return updateRow_('SHOPS', { shop_id: payload.shop_id, gps_edit_granted: true, gps_edit_requested: false, updated_at: now_() }, 'shop_id');
 }
 
 function checkIn_(payload, user) {
@@ -312,9 +331,10 @@ function uploadShopPhoto_(payload, user) {
   const fileName = (shop.shop_id + '_' + slug_(shop.shop_name) + '_' + stamp + '_Shop.jpg').replace(/_+/g, '_');
   const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName));
   file.setDescription('Cao Nguyen Vina Coffee - Shop ' + shop.shop_id);
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (_) {}
   updateRow_('SHOPS', { shop_id: shop.shop_id, photo_file_id: file.getId(), photo_url: file.getUrl(), updated_at: now_() }, 'shop_id');
   audit_('uploadShopPhoto', shop.shop_id, { fileId: file.getId(), name: fileName });
-  return { file_id: file.getId(), file_url: file.getUrl(), file_name: fileName };
+  return { file_id: file.getId(), file_url: driveViewUrl_(file.getId()), thumbnail_url: driveThumbnailUrl_(file.getId()), file_name: fileName };
 }
 
 function uploadVisitPhoto_(payload, user) {
@@ -342,6 +362,18 @@ function getOrCreateShopFolder_(shopId, shopName) {
   const folderName = shopId + '_' + slug_(shopName);
   const folders = root.getFoldersByName(folderName);
   return folders.hasNext() ? folders.next() : root.createFolder(folderName);
+}
+
+function driveThumbnailUrl_(fileId) { return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(String(fileId)) + '&sz=w240'; }
+function driveViewUrl_(fileId) { return 'https://drive.google.com/uc?export=view&id=' + encodeURIComponent(String(fileId)); }
+function ensurePhotoPreviewAccess_(fileId) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'PHOTO_PUBLIC_' + String(fileId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 80);
+  if (cache.get(cacheKey) === '1') return;
+  try {
+    DriveApp.getFileById(fileId).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    cache.put(cacheKey, '1', 21600);
+  } catch (_) {}
 }
 
 function getOrders_(payload) {
@@ -471,11 +503,36 @@ function getKpiTargets_(payload) {
   });
 }
 
+function getKpiProgress_(payload) {
+  const definitions = getRows_('KPI_DEFINITIONS');
+  const targets = getRows_('KPI_TARGETS').filter(function(target) {
+    const ownerOk = !payload.salespersonId || !target.user_id || target.user_id === payload.salespersonId;
+    const dateOk = (!payload.dateFrom || !target.end_date || target.end_date >= payload.dateFrom) && (!payload.dateTo || !target.start_date || target.start_date <= payload.dateTo);
+    return ownerOk && dateOk;
+  });
+  const orders = filterRows_(getRows_('ORDERS'), payload);
+  const visits = filterRows_(getRows_('VISITS'), payload);
+  const records = filterRows_(getRows_('KPI_RECORDS'), payload);
+  return definitions.map(function(definition) {
+    const definitionTargets = targets.filter(function(target) { return target.kpi_id === definition.kpi_id; });
+    const targetValue = definitionTargets.reduce(function(total, target) { return total + (Number(target.target_value) || 0); }, 0);
+    const target = definitionTargets[0] || { kpi_id: definition.kpi_id, user_id: payload.salespersonId || '' };
+    const actual = calculateKpiActual_(definition, target, orders, visits, records);
+    return Object.assign({}, definition, {
+      target_value: targetValue,
+      actual_value: Math.round(actual * 100) / 100,
+      progress: targetValue > 0 ? Math.min(100, Math.round(actual / targetValue * 100)) : 0,
+      target_count: definitionTargets.length
+    });
+  });
+}
+
 function filterRows_(rows, payload) {
   return rows.filter(function(row) {
     const salesFilter = payload.salespersonId || payload.salesperson_id || '';
-    const salespersonOk = !salesFilter || row.salesperson_id === salesFilter;
-    const dateValue = row.order_date || row.visit_date || row.paid_date || row.created_at;
+    const rowOwner = row.salesperson_id || row.user_id;
+    const salespersonOk = !salesFilter || rowOwner === salesFilter;
+    const dateValue = row.order_date || row.visit_date || row.paid_date || row.record_date || row.created_at;
     return salespersonOk && inDateRange_(dateValue, payload);
   });
 }
