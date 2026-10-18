@@ -11,7 +11,7 @@ const APP = {
   driveRootFolderId: '1yuK9MuHFWieUeyF0u5SbkcfQJirrqeWF',
   timeZone: 'Asia/Ho_Chi_Minh',
   sheets: {
-    USERS: ['user_id', 'email', 'full_name', 'role', 'phone', 'active', 'username', 'password', 'password_hash'],
+    USERS: ['user_id', 'email', 'full_name', 'role', 'phone', 'active', 'username', 'password', 'password_hash', 'password_salt'],
     SHOPS: ['shop_id', 'shop_name', 'address', 'latitude', 'longitude', 'phone', 'contact_name', 'current_supplier', 'salesperson_id', 'status', 'notes', 'created_at', 'updated_at', 'gps_locked', 'gps_edit_granted', 'photo_file_id', 'photo_url', 'gps_edit_requested'],
     VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'created_at', 'checkin_latitude', 'checkin_longitude', 'distance_meters', 'checkin_verified'],
     ORDERS: ['order_id', 'shop_id', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status', 'notes', 'created_at'],
@@ -25,8 +25,7 @@ const APP = {
 };
 
 function doGet(e) {
-  const payload = Object.assign({}, e && e.parameter ? e.parameter : {}, { action: (e && e.parameter && e.parameter.action) || 'getConfig' });
-  return handleRequest_(payload);
+  return jsonResponse({ success: false, error: 'Chỉ hỗ trợ POST.' });
 }
 
 function doPost(e) {
@@ -37,8 +36,11 @@ function handleRequest_(payload) {
   try {
     const action = String(payload && payload.action || '');
     if (!action) throw new Error('Thiếu action trong request.');
-    ensureSchema_();
+    // Login cần schema mới để có thể nâng cấp mật khẩu cũ sang hash + salt.
+    // Các action khác chỉ được khởi tạo schema sau khi đã xác thực phiên.
+    if (action === 'login') ensureSchema_();
     const user = authorize_(action, payload);
+    if (action !== 'login') ensureSchema_();
     const scopedPayload = scopePayload_(payload, user);
     return jsonResponse({ success: true, data: route_(action, scopedPayload, user) });
   } catch (error) {
@@ -57,7 +59,6 @@ function route_(action, payload, user) {
   switch (action) {
     case 'login': return login_(payload);
     case 'logout': return logout_(payload);
-    case 'initializeSchema': return initializeSchema_();
     case 'getConfig': return getConfig_();
     case 'getUsers': return getUsers_(user);
     case 'getShops': return getShops_(payload);
@@ -73,7 +74,7 @@ function route_(action, payload, user) {
     case 'getOrders': return getOrders_(payload);
     case 'createOrder': return createOrder_(payload, user);
     case 'updateOrder': return updateOrder_(payload, user);
-    case 'confirmPayment': return confirmPayment_(payload);
+    case 'confirmPayment': return confirmPayment_(payload, user);
     case 'getKpis': return getRows_('KPI_DEFINITIONS');
     case 'getKpiProgress': return getKpiProgress_(payload);
     case 'getKpiTargets': return getKpiTargets_(payload);
@@ -89,14 +90,13 @@ function route_(action, payload, user) {
 }
 
 function authorize_(action, payload) {
-  if (action === 'login' || action === 'initializeSchema') return { role: 'admin', email: '' };
+  if (action === 'login') return { role: 'admin', email: '' };
   if (action === 'logout') return getSessionUser_(payload.session_token) || { role: 'admin', email: '' };
-  if (action === 'getConfig') return getSessionUser_(payload.session_token) || { role: 'admin', email: '' };
   const user = getSessionUser_(payload && payload.session_token);
   if (!user) throw new Error('Phiên đăng nhập không hợp lệ hoặc đã hết hạn.');
   const role = role_(user);
   const permissions = {
-    getDashboard: ['admin', 'sales'], getShops: ['admin', 'sales'], getShopDetail: ['admin', 'sales'],
+    getConfig: ['admin'], getDashboard: ['admin', 'sales'], getShops: ['admin', 'sales'], getShopDetail: ['admin', 'sales'],
     getOrders: ['admin', 'sales', 'accountant', 'kế toán'], getKpis: ['admin', 'sales'], getKpiProgress: ['admin', 'sales'],
     getKpiTargets: ['admin', 'sales'], getReports: ['admin', 'sales'], exportReportXlsx: ['admin', 'sales'],
     getUsers: ['admin', 'sales'], createShop: ['admin', 'sales'], updateShop: ['admin', 'sales'],
@@ -116,18 +116,34 @@ function login_(payload) {
   const username = String(payload.username || '').trim().toLowerCase();
   const password = String(payload.password || '');
   if (!username || !password) throw new Error('Vui lòng nhập tên đăng nhập và mật khẩu.');
+  const failureKey = 'LOGIN_FAIL_' + hashPassword_(username, 'RATE').slice(0, 32);
+  const failures = Number(CacheService.getScriptCache().get(failureKey) || 0);
+  if (failures >= 5) throw new Error('Tài khoản tạm khóa đăng nhập 15 phút do nhập sai quá nhiều lần.');
   const user = getRows_('USERS').filter(function(row) {
     const login = String(row.username || row.email || '').trim().toLowerCase();
-    return login === username && String(row.active) !== 'false';
+    return login === username && isActive_(row.active);
   })[0];
-  if (!user) throw new Error('Tên đăng nhập không tồn tại hoặc tài khoản đã bị khóa.');
+  if (!user) {
+    CacheService.getScriptCache().put(failureKey, String(failures + 1), 900);
+    throw new Error('Tên đăng nhập hoặc mật khẩu không đúng.');
+  }
   const plainMatch = String(user.password || '') === password;
-  const hashMatch = String(user.password_hash || '') && String(user.password_hash) === hashPassword_(password, user.username || user.email);
-  if (!plainMatch && !hashMatch) throw new Error('Mật khẩu không đúng.');
+  const hashMatch = String(user.password_hash || '') && String(user.password_hash) === hashPassword_(password, user.password_salt || user.username || user.email);
+  if (!plainMatch && !hashMatch) {
+    CacheService.getScriptCache().put(failureKey, String(failures + 1), 900);
+    throw new Error('Tên đăng nhập hoặc mật khẩu không đúng.');
+  }
+  CacheService.getScriptCache().remove(failureKey);
+  if (plainMatch || !user.password_salt) migratePassword_(user, password);
   const safeUser = sanitizeUser_(user);
   const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 12);
-  CacheService.getScriptCache().put('SESSION_' + token, JSON.stringify(safeUser), 21600);
+  CacheService.getScriptCache().put('SESSION_' + token, JSON.stringify(safeUser), 7200);
   return { token: token, user: safeUser };
+}
+
+function migratePassword_(user, password) {
+  const salt = Utilities.getUuid().replace(/-/g, '');
+  updateRow_('USERS', { user_id: user.user_id, password: '', password_hash: hashPassword_(password, salt), password_salt: salt }, 'user_id');
 }
 
 function logout_(payload) {
@@ -143,10 +159,11 @@ function getSessionUser_(token) {
 }
 
 function sanitizeUser_(user) {
-  return { user_id: user.user_id, username: user.username || user.email, email: user.email || '', full_name: user.full_name || user.username || user.email, role: user.role || 'sales', phone: user.phone || '', active: user.active !== 'false' };
+  return { user_id: user.user_id, username: user.username || user.email, email: user.email || '', full_name: user.full_name || user.username || user.email, role: user.role || 'sales', phone: user.phone || '', active: isActive_(user.active) };
 }
 
 function role_(user) { return String(user && user.role || '').trim().toLowerCase(); }
+function isActive_(value) { return value !== false && String(value).trim().toLowerCase() !== 'false' && String(value).trim() !== '0'; }
 
 function scopePayload_(payload, user) {
   const scoped = Object.assign({}, payload || {});
@@ -176,9 +193,9 @@ function initializeSchema_() {
 
 function ensureSchema_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('SCHEMA_READY_V3') === '1') return;
+  if (cache.get('SCHEMA_READY_V4') === '1') return;
   initializeSchema_();
-  cache.put('SCHEMA_READY_V3', '1', 21600);
+  cache.put('SCHEMA_READY_V4', '1', 21600);
 }
 
 function getConfig_() {
@@ -198,6 +215,8 @@ function getShops_(payload) {
   const orders = getRows_('ORDERS');
   const visits = getRows_('VISITS');
   const users = indexBy_(getRows_('USERS'), 'user_id');
+  const ordersByShop = groupBy_(orders, 'shop_id');
+  const visitsByShop = groupBy_(visits, 'shop_id');
   return shops.map(function(shop) {
     if (shop.photo_file_id) ensurePhotoPreviewAccess_(shop.photo_file_id);
     const normalizedShop = Object.assign({}, shop);
@@ -205,18 +224,20 @@ function getShops_(payload) {
     const longitude = parseCoordinate_(shop.longitude);
     if (isFinite(latitude)) normalizedShop.latitude = latitude;
     if (isFinite(longitude)) normalizedShop.longitude = longitude;
-    const shopOrders = orders.filter(function(order) { return order.shop_id === shop.shop_id && inDateRange_(order.order_date, payload); });
-    const shopVisits = visits.filter(function(visit) { return visit.shop_id === shop.shop_id && inDateRange_(visit.visit_date, payload); });
+    const allShopOrders = ordersByShop[shop.shop_id] || [];
+    const allShopVisits = visitsByShop[shop.shop_id] || [];
+    const shopOrders = allShopOrders.filter(function(order) { return inDateRange_(order.order_date, payload); });
+    const shopVisits = allShopVisits.filter(function(visit) { return inDateRange_(visit.visit_date, payload); });
     const revenue = sum_(shopOrders, 'total_amount');
     return Object.assign({}, normalizedShop, {
       salesperson_name: users[shop.salesperson_id] ? users[shop.salesperson_id].full_name : '',
       photo_thumbnail_url: shop.photo_file_id ? driveThumbnailUrl_(shop.photo_file_id) : '',
       photo_direct_url: shop.photo_file_id ? driveViewUrl_(shop.photo_file_id) : '',
       revenue: revenue,
-      avg_monthly_revenue: averageMonthly_(orders.filter(function(order) { return order.shop_id === shop.shop_id; }), 'total_amount'),
-      avg_monthly_orders: averageMonthlyCount_(orders.filter(function(order) { return order.shop_id === shop.shop_id; })),
-      last_order_at: latest_(orders.filter(function(order) { return order.shop_id === shop.shop_id; }), 'order_date'),
-      last_visit_at: latest_(visits.filter(function(visit) { return visit.shop_id === shop.shop_id; }), 'visit_date'),
+      avg_monthly_revenue: averageMonthly_(allShopOrders, 'total_amount'),
+      avg_monthly_orders: averageMonthlyCount_(allShopOrders),
+      last_order_at: latest_(allShopOrders, 'order_date'),
+      last_visit_at: latest_(allShopVisits, 'visit_date'),
       visit_count: shopVisits.length
     });
   });
@@ -258,7 +279,11 @@ function updateShop_(payload, user) {
   const existingLongitude = parseCoordinate_(shop.longitude);
   const gpsChanged = hasGpsPayload && (incomingLatitude !== existingLatitude || incomingLongitude !== existingLongitude);
   if (gpsChanged && String(shop.gps_locked) === 'true' && String(shop.gps_edit_granted) !== 'true') throw new Error('GPS đã khóa. Hãy nhờ Admin cấp quyền sửa GPS một lần.');
-  const changes = Object.assign({}, payload, { updated_at: now_() });
+  const changes = { shop_id: shop.shop_id, updated_at: now_() };
+  ['shop_name', 'address', 'phone', 'contact_name', 'current_supplier', 'status', 'notes'].forEach(function(field) {
+    if (payload[field] !== undefined) changes[field] = String(payload[field]).slice(0, 2000);
+  });
+  if (role_(user) === 'admin' && payload.salesperson_id !== undefined) changes.salesperson_id = String(payload.salesperson_id);
   if (hasGpsPayload) {
     changes.latitude = incomingLatitude;
     changes.longitude = incomingLongitude;
@@ -326,6 +351,7 @@ function uploadShopPhoto_(payload, user) {
   if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được cập nhật ảnh quán do mình phụ trách.');
   const match = String(payload.data_url).match(/^data:(.*?);base64,(.*)$/);
   if (!match) throw new Error('Ảnh không đúng định dạng data URL.');
+  validateImageData_(match);
   const folder = getOrCreateShopFolder_(shop.shop_id, shop.shop_name);
   const stamp = Utilities.formatDate(new Date(), APP.timeZone, 'yyyyMMdd_HHmmss');
   const fileName = (shop.shop_id + '_' + slug_(shop.shop_name) + '_' + stamp + '_Shop.jpg').replace(/_+/g, '_');
@@ -341,18 +367,22 @@ function uploadVisitPhoto_(payload, user) {
   if (!payload.data_url || !payload.visit_id) throw new Error('Thiếu ảnh hoặc mã visit.');
   const match = String(payload.data_url).match(/^data:(.*?);base64,(.*)$/);
   if (!match) throw new Error('Ảnh không đúng định dạng data URL.');
-  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  validateImageData_(match);
+  const visit = getRows_('VISITS').filter(function(row) { return row.visit_id === payload.visit_id; })[0];
+  if (!visit) throw new Error('Không tìm thấy lượt check-in.');
+  if (payload.shop_id && payload.shop_id !== visit.shop_id) throw new Error('Lượt check-in không thuộc quán đã chọn.');
+  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === visit.shop_id; })[0];
   if (shop && role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn không có quyền cập nhật ảnh cho quán này.');
-  const folder = getOrCreateShopFolder_(payload.shop_id, shop ? shop.shop_name : payload.shop_id);
-  const safeShop = slug_(shop ? shop.shop_name : payload.shop_id);
+  const folder = getOrCreateShopFolder_(visit.shop_id, shop ? shop.shop_name : visit.shop_id);
+  const safeShop = slug_(shop ? shop.shop_name : visit.shop_id);
   const stamp = Utilities.formatDate(new Date(), APP.timeZone, 'yyyyMMdd_HHmm');
-  let fileName = (payload.shop_id + '_' + safeShop + '_' + stamp + '_Visit.jpg').replace(/_+/g, '_');
+  let fileName = (visit.shop_id + '_' + safeShop + '_' + stamp + '_Visit.jpg').replace(/_+/g, '_');
   const existing = folder.getFilesByName(fileName);
   if (existing.hasNext()) fileName = fileName.replace('_Visit.jpg', '_Visit_' + payload.visit_id + '.jpg');
   const blob = Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName);
   const file = folder.createFile(blob);
   file.setDescription('Cao Nguyen Vina Coffee - Visit ' + payload.visit_id);
-  updateRow_('VISITS', { visit_id: payload.visit_id, photo_file_id: file.getId(), photo_url: file.getUrl() }, 'visit_id');
+  updateRow_('VISITS', { visit_id: visit.visit_id, photo_file_id: file.getId(), photo_url: file.getUrl() }, 'visit_id');
   audit_('uploadVisitPhoto', payload.visit_id, { fileId: file.getId(), name: fileName });
   return { file_id: file.getId(), file_url: file.getUrl(), file_name: fileName };
 }
@@ -390,14 +420,22 @@ function getOrders_(payload) {
 
 function createOrder_(payload, user) {
   if (!payload.shop_id || !payload.product_type) throw new Error('Thiếu quán hoặc loại sản phẩm.');
+  const productType = String(payload.product_type).trim();
+  if (['FLAMEN_PHA_MAY', 'FLAMEN_PHA_PHIN'].indexOf(slug_(productType)) < 0) throw new Error('Loại cafe không hợp lệ. Chỉ chọn Flamen pha máy hoặc Flamen pha phin.');
+  const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
+  if (!shop) throw new Error('Không tìm thấy quán.');
+  if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được tạo đơn cho quán do mình phụ trách.');
   const quantity = parseNumber_(payload.quantity_kg);
   if (quantity <= 0) throw new Error('Số lượng Kg phải lớn hơn 0.');
+  if (quantity > 100000) throw new Error('Số lượng Kg vượt giới hạn cho phép.');
   const row = normalize_(payload, APP.sheets.ORDERS);
   if (user && role_(user) === 'sales') row.salesperson_id = user.user_id;
   row.order_id = row.order_id || id_('ORDER');
   row.quantity_kg = quantity;
   row.unit_price = parseNumber_(payload.unit_price);
-  row.total_amount = payload.total_amount === undefined || payload.total_amount === '' ? row.quantity_kg * row.unit_price : parseNumber_(payload.total_amount);
+  if (row.unit_price < 0) throw new Error('Đơn giá không được âm.');
+  row.product_type = productType;
+  row.total_amount = row.quantity_kg * row.unit_price;
   row.order_date = row.order_date || date_();
   row.payment_status = row.payment_status || 'Chờ xác nhận';
   row.created_at = now_();
@@ -410,18 +448,34 @@ function updateOrder_(payload, user) {
   const order = getRows_('ORDERS').filter(function(row) { return row.order_id === payload.order_id; })[0];
   if (!order) throw new Error('Không tìm thấy đơn hàng.');
   if (role_(user) === 'sales' && order.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được sửa đơn hàng của mình.');
-  return updateRow_('ORDERS', payload, 'order_id');
+  if (String(order.payment_status || '').trim() === 'Đã thanh toán' && (payload.quantity_kg !== undefined || payload.unit_price !== undefined)) throw new Error('Không thể sửa số lượng hoặc đơn giá của đơn đã thanh toán.');
+  const changes = { order_id: order.order_id };
+  if (payload.notes !== undefined) changes.notes = String(payload.notes).slice(0, 2000);
+  if (payload.payment_status !== undefined && role_(user) === 'admin') changes.payment_status = payload.payment_status;
+  if (payload.quantity_kg !== undefined || payload.unit_price !== undefined) {
+    const quantity = payload.quantity_kg === undefined ? parseNumber_(order.quantity_kg) : parseNumber_(payload.quantity_kg);
+    const unitPrice = payload.unit_price === undefined ? parseNumber_(order.unit_price) : parseNumber_(payload.unit_price);
+    if (quantity <= 0 || unitPrice < 0) throw new Error('Số lượng hoặc đơn giá không hợp lệ.');
+    changes.quantity_kg = quantity;
+    changes.unit_price = unitPrice;
+    changes.total_amount = quantity * unitPrice;
+  }
+  return updateRow_('ORDERS', changes, 'order_id');
 }
 
-function confirmPayment_(payload) {
+function confirmPayment_(payload, user) {
   if (!payload.order_id) throw new Error('Thiếu order_id.');
   const orders = getRows_('ORDERS');
   const order = orders.filter(function(row) { return row.order_id === payload.order_id; })[0];
   if (!order) throw new Error('Không tìm thấy đơn hàng.');
+  if (String(order.payment_status || '').trim() === 'Đã thanh toán') throw new Error('Đơn hàng này đã được xác nhận thanh toán.');
   const payment = normalize_(payload, APP.sheets.PAYMENTS);
   payment.payment_id = payment.payment_id || id_('PAY');
-  payment.shop_id = payment.shop_id || order.shop_id;
-  payment.amount = Number(payment.amount || order.total_amount || 0);
+  payment.order_id = order.order_id;
+  payment.shop_id = order.shop_id;
+  payment.accountant_id = user && user.user_id ? user.user_id : '';
+  payment.amount = parseNumber_(order.total_amount);
+  if (payment.amount <= 0) throw new Error('Đơn hàng không có giá trị thanh toán hợp lệ.');
   payment.paid_date = payment.paid_date || date_();
   payment.status = 'Đã thanh toán';
   appendRow_('PAYMENTS', payment);
@@ -568,7 +622,7 @@ function updateRow_(sheetName, payload, key) {
   const rowIndex = values.findIndex(function(row) { return String(row[keyIndex]) === String(payload[key]); });
   if (rowIndex < 0) throw new Error('Không tìm thấy bản ghi ' + payload[key]);
   const current = values[rowIndex];
-  headers.forEach(function(header, index) { if (Object.prototype.hasOwnProperty.call(payload, header) && payload[header] !== undefined) current[index] = payload[header]; });
+  headers.forEach(function(header, index) { if (Object.prototype.hasOwnProperty.call(payload, header) && payload[header] !== undefined) current[index] = safeCellValue_(header, payload[header]); });
   sheet.getRange(rowIndex + 2, 1, 1, headers.length).setValues([current]);
   audit_('update' + sheetName, payload[key], payload);
   return rowToObject_(headers, current);
@@ -588,13 +642,21 @@ function appendRow_(sheetName, object) {
   try {
     const sheet = SpreadsheetApp.openById(APP.spreadsheetId).getSheetByName(sheetName);
     const headers = APP.sheets[sheetName];
-    sheet.appendRow(headers.map(function(header) { return object[header] === undefined ? '' : object[header]; }));
+    sheet.appendRow(headers.map(function(header) { return object[header] === undefined ? '' : safeCellValue_(header, object[header]); }));
   } finally { lock.releaseLock(); }
 }
 
-function normalize_(payload, headers) { const object = {}; headers.forEach(function(header) { if (payload[header] !== undefined) object[header] = payload[header]; }); return object; }
+function normalize_(payload, headers) { const object = {}; headers.forEach(function(header) { if (payload[header] !== undefined) object[header] = safeCellValue_(header, payload[header]); }); return object; }
+function safeCellValue_(header, value) {
+  if (value === null || value === undefined || typeof value !== 'string') return value;
+  const text = value.slice(0, 50000);
+  const numeric = /^-?\d+(?:[.,]\d+)?$/.test(text.trim());
+  if (/^[=+@-]/.test(text) && !numeric) return "'" + text;
+  return text;
+}
 function rowToObject_(headers, row) { const object = {}; headers.forEach(function(header, index) { object[header] = row[index] instanceof Date ? Utilities.formatDate(row[index], APP.timeZone, "yyyy-MM-dd'T'HH:mm:ss") : row[index]; }); return object; }
 function indexBy_(rows, key) { return rows.reduce(function(acc, row) { if (row[key]) acc[row[key]] = row; return acc; }, {}); }
+function groupBy_(rows, key) { return rows.reduce(function(acc, row) { if (!row[key]) return acc; if (!acc[row[key]]) acc[row[key]] = []; acc[row[key]].push(row); return acc; }, {}); }
 function sum_(rows, key) { return rows.reduce(function(total, row) { return total + (Number(row[key]) || 0); }, 0); }
 function latest_(rows, key) { return rows.reduce(function(latest, row) { return !latest || String(row[key]) > String(latest) ? row[key] : latest; }, ''); }
 function averageMonthly_(rows, key) { const months = {}; rows.forEach(function(row) { const keyMonth = String(row.order_date || row.created_at || '').slice(0, 7); if (keyMonth) months[keyMonth] = (months[keyMonth] || 0) + (Number(row[key]) || 0); }); const values = Object.keys(months).map(function(key) { return months[key]; }); return values.length ? Math.round(values.reduce(function(a, b) { return a + b; }, 0) / values.length) : 0; }
@@ -703,8 +765,24 @@ function requireCoordinate_(value, label, min, max) {
   if (!isFinite(number) || number < min || number > max) throw new Error('Tọa độ ' + label + ' không hợp lệ. Hãy dùng dạng số thập phân, ví dụ 10.989025.');
   return number;
 }
+function validateImageData_(match) {
+  const mimeType = String(match[1] || '').toLowerCase();
+  const encoded = String(match[2] || '');
+  if (mimeType.indexOf('image/') !== 0 || ['image/jpeg', 'image/png', 'image/webp'].indexOf(mimeType) < 0) throw new Error('Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.');
+  if (!encoded || encoded.length > 8 * 1024 * 1024) throw new Error('Ảnh sau khi nén không được lớn hơn 8 MB.');
+}
 function distanceMeters_(lat1, lon1, lat2, lon2) { const radius = 6371000; const toRadians = function(value) { return value * Math.PI / 180; }; const dLat = toRadians(lat2 - lat1); const dLon = toRadians(lon2 - lon1); const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2); return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); }
-function audit_(action, entityId, details) { try { appendRow_('LOGS', { log_id: id_('LOG'), email: Session.getActiveUser().getEmail() || '', action: action, entity_id: entityId, created_at: now_(), details: JSON.stringify(details).slice(0, 45000) }); } catch (_) {} }
+function audit_(action, entityId, details) { try { appendRow_('LOGS', { log_id: id_('LOG'), email: Session.getActiveUser().getEmail() || '', action: action, entity_id: entityId, created_at: now_(), details: JSON.stringify(redactForLog_(details)).slice(0, 45000) }); } catch (_) {} }
+function redactForLog_(value) {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(redactForLog_);
+  const output = {};
+  Object.keys(value).forEach(function(key) {
+    const normalizedKey = String(key).toLowerCase();
+    output[key] = normalizedKey.indexOf('password') >= 0 || normalizedKey.indexOf('session') >= 0 || normalizedKey.indexOf('token') >= 0 || normalizedKey.indexOf('data_url') >= 0 || normalizedKey.indexOf('authorization') >= 0 ? '[REDACTED]' : redactForLog_(value[key]);
+  });
+  return output;
+}
 function logError_(action, error) { try { audit_('ERROR_' + action, '', { error: safeMessage_(error) }); } catch (_) {} }
 function safeMessage_(error) { return error && error.message ? error.message : String(error); }
 function jsonResponse(payload) { return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON); }

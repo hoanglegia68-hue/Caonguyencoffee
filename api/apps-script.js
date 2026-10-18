@@ -5,21 +5,41 @@ export default async function handler(request, response) {
     return
   }
 
+  if (request.method !== 'POST') {
+    response.setHeader('Allow', 'POST')
+    response.status(405).json({ success: false, error: 'Chỉ hỗ trợ POST.' })
+    return
+  }
+
   try {
-    const method = request.method === 'GET' ? 'GET' : 'POST'
     const target = new URL(appsScriptUrl)
-    let body
-    if (method === 'GET') {
-      const query = request.query || {}
-      Object.entries(query).forEach(([key, value]) => target.searchParams.set(key, String(value)))
-      body = undefined
-    } else {
-      body = typeof request.body === 'string' ? request.body : JSON.stringify(request.body || {})
+    if (target.hostname !== 'script.google.com' || !/^\/macros\/s\/[^/]+\/exec$/.test(target.pathname)) {
+      response.status(500).json({ success: false, error: 'APPS_SCRIPT_URL không hợp lệ.' })
+      return
     }
-    const upstream = await fetch(target, { method, headers: { 'Content-Type': 'application/json' }, body })
+
+    const headers = request.headers || {}
+    const contentLength = Number(headers['content-length'] || headers['Content-Length'] || 0)
+    if (contentLength > 8 * 1024 * 1024) {
+      response.status(413).json({ success: false, error: 'Request quá lớn.' })
+      return
+    }
+
+    const body = typeof request.body === 'string' ? request.body : JSON.stringify(request.body || {})
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 25000)
+    let upstream
+    try {
+      upstream = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal })
+    } finally {
+      clearTimeout(timeoutId)
+    }
     const text = await upstream.text()
+    response.setHeader('Cache-Control', 'no-store')
+    response.setHeader('X-Content-Type-Options', 'nosniff')
     response.status(upstream.status).setHeader('Content-Type', 'application/json').send(text)
   } catch (error) {
-    response.status(502).json({ success: false, error: error instanceof Error ? error.message : 'Không thể kết nối Apps Script.' })
+    const message = error instanceof Error && error.name === 'AbortError' ? 'Apps Script phản hồi quá thời gian.' : 'Không thể kết nối Apps Script.'
+    response.status(502).json({ success: false, error: message })
   }
 }

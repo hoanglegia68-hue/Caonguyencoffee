@@ -28,7 +28,7 @@ export class ApiError extends Error {
 
 export function getStoredSession(): AuthSession | null {
   try {
-    const raw = window.localStorage.getItem(SESSION_KEY)
+    const raw = window.sessionStorage.getItem(SESSION_KEY)
     return raw ? JSON.parse(raw) as AuthSession : null
   } catch (_) {
     return null
@@ -36,11 +36,13 @@ export function getStoredSession(): AuthSession | null {
 }
 
 export function storeSession(session: AuthSession) {
-  window.localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+  window.localStorage.removeItem(SESSION_KEY)
+  window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session))
 }
 
 export function clearStoredSession() {
   window.localStorage.removeItem(SESSION_KEY)
+  window.sessionStorage.removeItem(SESSION_KEY)
 }
 
 export async function loginWithPassword(username: string, password: string) {
@@ -85,6 +87,8 @@ export async function apiRequest<T = unknown>(action: string, payload: ApiPayloa
 }
 
 export async function fileToCompressedDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith('image/')) throw new Error('Chỉ được tải tệp hình ảnh')
+  if (file.size > 12 * 1024 * 1024) throw new Error('Ảnh không được lớn hơn 12 MB')
   const bitmap = await createImageBitmap(file)
   const maxSize = 1600
   const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height))

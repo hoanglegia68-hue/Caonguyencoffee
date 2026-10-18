@@ -32,7 +32,7 @@ Nếu không thiết lập URL, giao diện vẫn chạy với trạng thái r�
 Sau khi chạy `initializeSchema`, nhập một dòng cho mỗi người dùng. Các cột chính:
 
 ```text
-user_id | email | full_name | role | phone | active | username | password | password_hash
+user_id | email | full_name | role | phone | active | username | password | password_hash | password_salt
 ```
 
 Ví dụ:
@@ -44,6 +44,8 @@ U003 | ketoan@caonguyen.vn | Kế toán | accountant | | TRUE | ketoan01 | matkh
 ```
 
 `role` nhận `admin`, `sales` hoặc `accountant`/`kế toán`. Tài khoản Sales chỉ thấy dữ liệu quán, đơn hàng, KPI và tuyến của chính mình. Tài khoản Kế toán chỉ thấy Menu Thanh toán. Không gửi mật khẩu lên GitHub; chỉ người quản trị được quyền xem tab `USERS`.
+
+Tài khoản cũ có thể nhập mật khẩu tạm thời ở cột `password` để đăng nhập lần đầu. Sau khi đăng nhập thành công, hệ thống tự chuyển sang `password_hash` + `password_salt` và xóa mật khẩu rõ trong sheet. Từ lần sau không cần nhập lại cột `password`.
 
 ## 3. Thiết lập Vercel
 
@@ -58,6 +60,8 @@ Sau đó redeploy. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển
 ## 4. Quyền và dữ liệu
 
 - Đăng nhập dùng `username` hoặc `email` và `password` trong tab `USERS`.
+- Phiên đăng nhập chỉ lưu trong tab trình duyệt hiện tại và tự hết hạn sau 2 giờ; không lưu token vào Git, URL hoặc log nghiệp vụ.
+- Giá trị đơn hàng, quyền người dùng và trạng thái thanh toán được Apps Script kiểm tra/tính lại ở backend; không tin dữ liệu quyết định từ frontend.
 - Các tab nghiệp vụ gồm `SHOPS`, `VISITS`, `ORDERS`, `PAYMENTS`, `KPI_DEFINITIONS`, `KPI_TARGETS`, `KPI_RECORDS`.
 - KPI có thể tạo mới và giao cho từng Sales theo chu kỳ ngày/tuần/tháng, với phép tính `SUM`, `COUNT`, `AVG`, `DISTINCT_COUNT` hoặc `MANUAL`.
 - Ảnh quán được lưu trong thư mục Drive gốc theo thư mục con `[MA_QUAN]_[TEN_QUAN]`; Menu Danh sách quán hiển thị thumbnail nhỏ và liên kết mở ảnh thật sau khi lưu.
@@ -66,6 +70,7 @@ Sau đó redeploy. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển
 - GPS được lấy tại Menu Danh sách quán và khóa sau khi lưu. Admin có nút **Cấp sửa GPS**; quyền chỉ dùng được cho một lần cập nhật rồi tự khóa lại.
 - Sales có nút **Xin sửa GPS** khi GPS đã khóa; Admin phê duyệt yêu cầu tại Danh sách quán. Sau khi Sales lưu GPS mới, quyền tự khóa lại.
 - Ảnh quán mới được cấp quyền xem bằng liên kết để thumbnail hiển thị được trên điện thoại; người dùng cần triển khai lại Apps Script sau khi cập nhật mã.
+- Ảnh chỉ nhận JPG/PNG/WebP và phải được nén trước khi gửi; Apps Script từ chối data URL không hợp lệ hoặc quá lớn.
 - Menu Đi tuyến chỉ có check-in. Check-in hợp lệ khi khoảng cách tới GPS quán không quá 50 m và được dùng để tính KPI tuyến.
 - Các thông tin nhạy cảm không được đặt trong frontend hoặc commit vào Git.
 
@@ -80,3 +85,5 @@ npm run build
 ```
 
 Trước khi sử dụng thật, kiểm tra quyền GPS/camera trên điện thoại, quyền Apps Script đối với Sheet/Drive và hạn mức miễn phí của Google Apps Script/Vercel.
+
+Sau mỗi lần cập nhật `apps-script/Code.gs`, cần tạo deployment version mới của Web app rồi kiểm tra lại một lần đăng nhập, tạo đơn, xác nhận thanh toán, check-in và tải ảnh. Biến `APPS_SCRIPT_URL` chỉ đặt trong Vercel Environment Variables, không commit vào GitHub.
