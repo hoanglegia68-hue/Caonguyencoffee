@@ -60,7 +60,9 @@ Sau đó redeploy. Frontend gọi `/api/apps-script`, còn Vercel proxy chuyển
 - Đăng nhập dùng `username` hoặc `email` và `password` trong tab `USERS`.
 - Các tab nghiệp vụ gồm `SHOPS`, `VISITS`, `ORDERS`, `PAYMENTS`, `KPI_DEFINITIONS`, `KPI_TARGETS`, `KPI_RECORDS`.
 - KPI có thể tạo mới và giao cho từng Sales theo chu kỳ ngày/tuần/tháng, với phép tính `SUM`, `COUNT`, `AVG`, `DISTINCT_COUNT` hoặc `MANUAL`.
-- Ảnh quán được lưu trong thư mục Drive gốc theo thư mục con `[MA_QUAN]_[TEN_QUAN]`; Menu Danh sách quán hiển thị biểu tượng ảnh sau khi lưu.
+- Ảnh quán được lưu trong thư mục Drive gốc theo thư mục con `[MA_QUAN]_[TEN_QUAN]`; Menu Danh sách quán hiển thị thumbnail nhỏ và liên kết mở ảnh thật sau khi lưu.
+- Thư mục Drive gốc đang dùng là thư mục đã cấu hình trong `apps-script/Code.gs`; không cần mở thư mục từ giao diện.
+- GPS dạng `10.989.025` được chuẩn hóa thành `10.989025` trước khi tính khoảng cách và tạo liên kết Google Maps.
 - GPS được lấy tại Menu Danh sách quán và khóa sau khi lưu. Admin có nút **Cấp sửa GPS**; quyền chỉ dùng được cho một lần cập nhật rồi tự khóa lại.
 - Menu Đi tuyến chỉ có check-in. Check-in hợp lệ khi khoảng cách tới GPS quán không quá 50 m và được dùng để tính KPI tuyến.
 - Các thông tin nhạy cảm không được đặt trong frontend hoặc commit vào Git.

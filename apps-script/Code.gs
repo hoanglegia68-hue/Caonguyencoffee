@@ -8,7 +8,7 @@
 
 const APP = {
   spreadsheetId: '1dZyetpYCBm2qboEdrvFhPrq1DH4pIVmGrY5weTbTM08',
-  driveRootFolderId: '1xJsrPnZNltFQs4djPO-SM7_FrwoSxu8r',
+  driveRootFolderId: '1yuK9MuHFWieUeyF0u5SbkcfQJirrqeWF',
   timeZone: 'Asia/Ho_Chi_Minh',
   sheets: {
     USERS: ['user_id', 'email', 'full_name', 'role', 'phone', 'active', 'username', 'password', 'password_hash'],
@@ -197,10 +197,15 @@ function getShops_(payload) {
   const visits = getRows_('VISITS');
   const users = indexBy_(getRows_('USERS'), 'user_id');
   return shops.map(function(shop) {
+    const normalizedShop = Object.assign({}, shop);
+    const latitude = parseCoordinate_(shop.latitude);
+    const longitude = parseCoordinate_(shop.longitude);
+    if (isFinite(latitude)) normalizedShop.latitude = latitude;
+    if (isFinite(longitude)) normalizedShop.longitude = longitude;
     const shopOrders = orders.filter(function(order) { return order.shop_id === shop.shop_id && inDateRange_(order.order_date, payload); });
     const shopVisits = visits.filter(function(visit) { return visit.shop_id === shop.shop_id && inDateRange_(visit.visit_date, payload); });
     const revenue = sum_(shopOrders, 'total_amount');
-    return Object.assign({}, shop, {
+    return Object.assign({}, normalizedShop, {
       salesperson_name: users[shop.salesperson_id] ? users[shop.salesperson_id].full_name : '',
       revenue: revenue,
       avg_monthly_revenue: averageMonthly_(orders.filter(function(order) { return order.shop_id === shop.shop_id; }), 'total_amount'),
@@ -222,6 +227,8 @@ function getShopDetail_(payload) {
 function createShop_(payload, user) {
   const row = normalize_(payload, APP.sheets.SHOPS);
   if (!row.latitude || !row.longitude) throw new Error('Hãy lấy GPS quán trước khi lưu hồ sơ.');
+  row.latitude = requireCoordinate_(row.latitude, 'vĩ độ', -90, 90);
+  row.longitude = requireCoordinate_(row.longitude, 'kinh độ', -180, 180);
   if (user && role_(user) === 'sales') row.salesperson_id = user.user_id;
   row.shop_id = row.shop_id || id_('SHOP');
   row.status = row.status || 'Đang hoạt động';
@@ -238,9 +245,18 @@ function updateShop_(payload, user) {
   const shop = getRows_('SHOPS').filter(function(row) { return row.shop_id === payload.shop_id; })[0];
   if (!shop) throw new Error('Không tìm thấy quán.');
   if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được sửa quán do mình phụ trách.');
-  const gpsChanged = (payload.latitude !== undefined && String(payload.latitude) !== String(shop.latitude || '')) || (payload.longitude !== undefined && String(payload.longitude) !== String(shop.longitude || ''));
+  const hasGpsPayload = payload.latitude !== undefined || payload.longitude !== undefined;
+  const incomingLatitude = payload.latitude !== undefined ? requireCoordinate_(payload.latitude, 'vĩ độ', -90, 90) : parseCoordinate_(shop.latitude);
+  const incomingLongitude = payload.longitude !== undefined ? requireCoordinate_(payload.longitude, 'kinh độ', -180, 180) : parseCoordinate_(shop.longitude);
+  const existingLatitude = parseCoordinate_(shop.latitude);
+  const existingLongitude = parseCoordinate_(shop.longitude);
+  const gpsChanged = hasGpsPayload && (incomingLatitude !== existingLatitude || incomingLongitude !== existingLongitude);
   if (gpsChanged && String(shop.gps_locked) === 'true' && String(shop.gps_edit_granted) !== 'true') throw new Error('GPS đã khóa. Hãy nhờ Admin cấp quyền sửa GPS một lần.');
   const changes = Object.assign({}, payload, { updated_at: now_() });
+  if (hasGpsPayload) {
+    changes.latitude = incomingLatitude;
+    changes.longitude = incomingLongitude;
+  }
   if (role_(user) === 'sales') changes.salesperson_id = user.user_id;
   if (gpsChanged) { changes.gps_locked = true; changes.gps_edit_granted = false; }
   return updateRow_('SHOPS', changes, 'shop_id');
@@ -257,17 +273,21 @@ function checkIn_(payload, user) {
   if (!shop) throw new Error('Không tìm thấy quán.');
   if (!shop.latitude || !shop.longitude) throw new Error('Quán chưa có GPS. Hãy cập nhật GPS tại Danh sách quán.');
   if (role_(user) === 'sales' && shop.salesperson_id !== user.user_id) throw new Error('Bạn chỉ được check-in quán do mình phụ trách.');
-  const distance = distanceMeters_(Number(shop.latitude), Number(shop.longitude), Number(payload.latitude), Number(payload.longitude));
+  const shopLatitude = requireCoordinate_(shop.latitude, 'GPS vĩ độ của quán', -90, 90);
+  const shopLongitude = requireCoordinate_(shop.longitude, 'GPS kinh độ của quán', -180, 180);
+  const currentLatitude = requireCoordinate_(payload.latitude, 'vĩ độ hiện tại', -90, 90);
+  const currentLongitude = requireCoordinate_(payload.longitude, 'kinh độ hiện tại', -180, 180);
+  const distance = distanceMeters_(shopLatitude, shopLongitude, currentLatitude, currentLongitude);
   if (distance > 50) throw new Error('Check-in không hợp lệ: bạn đang cách quán ' + Math.round(distance) + ' m, vượt bán kính 50 m.');
   const row = normalize_(payload, APP.sheets.VISITS);
   row.visit_id = id_('VISIT');
   row.shop_id = shop.shop_id;
   row.salesperson_id = role_(user) === 'sales' ? user.user_id : (payload.salesperson_id || shop.salesperson_id || '');
   row.visit_date = payload.visit_date || date_();
-  row.latitude = Number(payload.latitude);
-  row.longitude = Number(payload.longitude);
-  row.checkin_latitude = Number(payload.latitude);
-  row.checkin_longitude = Number(payload.longitude);
+  row.latitude = currentLatitude;
+  row.longitude = currentLongitude;
+  row.checkin_latitude = currentLatitude;
+  row.checkin_longitude = currentLongitude;
   row.distance_meters = Math.round(distance * 10) / 10;
   row.checkin_verified = true;
   row.created_at = now_();
@@ -327,7 +347,13 @@ function getOrCreateShopFolder_(shopId, shopName) {
 function getOrders_(payload) {
   const orders = filterRows_(getRows_('ORDERS'), payload);
   const shops = indexBy_(getRows_('SHOPS'), 'shop_id');
-  return orders.map(function(order) { return Object.assign({}, order, { shop_name: shops[order.shop_id] ? shops[order.shop_id].shop_name : '' }); });
+  const users = indexBy_(getRows_('USERS'), 'user_id');
+  return orders.map(function(order) {
+    return Object.assign({}, order, {
+      shop_name: shops[order.shop_id] ? shops[order.shop_id].shop_name : '',
+      salesperson_name: users[order.salesperson_id] ? users[order.salesperson_id].full_name : ''
+    });
+  });
 }
 
 function createOrder_(payload, user) {
@@ -539,6 +565,33 @@ function date_() { return Utilities.formatDate(new Date(), APP.timeZone, 'yyyy-M
 function id_(prefix) { return prefix + '_' + Utilities.getUuid().replace(/-/g, '').slice(0, 12).toUpperCase(); }
 function slug_(value) { return String(value || 'NO_NAME').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase(); }
 function hashPassword_(password, salt) { const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(salt || '') + ':' + String(password || '')); return bytes.map(function(byte) { const value = byte < 0 ? byte + 256 : byte; return ('0' + value.toString(16)).slice(-2); }).join(''); }
+function parseCoordinate_(value) {
+  let text = String(value === undefined || value === null ? '' : value).trim().replace(/[^0-9,.-]/g, '');
+  if (!text) return NaN;
+  const negative = text.charAt(0) === '-';
+  text = text.replace(/^[+-]/, '');
+  const dotParts = text.split('.');
+  const commaParts = text.split(',');
+  if (dotParts.length > 2 && dotParts.slice(1).every(function(part) { return part.length === 3; })) {
+    text = dotParts[0] + '.' + dotParts.slice(1).join('');
+  } else if (commaParts.length > 2 && commaParts.slice(1).every(function(part) { return part.length === 3; })) {
+    text = commaParts[0] + '.' + commaParts.slice(1).join('');
+  } else if (text.indexOf(',') >= 0 && text.indexOf('.') < 0) {
+    text = text.replace(',', '.');
+  } else if (text.indexOf(',') >= 0 && text.indexOf('.') >= 0) {
+    const lastDot = text.lastIndexOf('.');
+    const lastComma = text.lastIndexOf(',');
+    const decimalIndex = Math.max(lastDot, lastComma);
+    text = text.slice(0, decimalIndex).replace(/[.,]/g, '') + '.' + text.slice(decimalIndex + 1).replace(/[.,]/g, '');
+  }
+  const number = Number((negative ? '-' : '') + text);
+  return isFinite(number) ? number : NaN;
+}
+function requireCoordinate_(value, label, min, max) {
+  const number = parseCoordinate_(value);
+  if (!isFinite(number) || number < min || number > max) throw new Error('Tọa độ ' + label + ' không hợp lệ. Hãy dùng dạng số thập phân, ví dụ 10.989025.');
+  return number;
+}
 function distanceMeters_(lat1, lon1, lat2, lon2) { const radius = 6371000; const toRadians = function(value) { return value * Math.PI / 180; }; const dLat = toRadians(lat2 - lat1); const dLon = toRadians(lon2 - lon1); const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2); return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); }
 function audit_(action, entityId, details) { try { appendRow_('LOGS', { log_id: id_('LOG'), email: Session.getActiveUser().getEmail() || '', action: action, entity_id: entityId, created_at: now_(), details: JSON.stringify(details).slice(0, 45000) }); } catch (_) {} }
 function logError_(action, error) { try { audit_('ERROR_' + action, '', { error: safeMessage_(error) }); } catch (_) {} }

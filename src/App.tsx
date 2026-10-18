@@ -44,6 +44,7 @@ type Order = {
   order_id: string
   shop_id: string
   shop_name?: string
+  salesperson_name?: string
   product_type: string
   quantity_kg: number
   total_amount?: number
@@ -123,6 +124,36 @@ function formatDate(value?: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date)
+}
+
+function parseCoordinate(value?: number | string) {
+  let text = String(value ?? '').trim().replace(/[^0-9,.-]/g, '')
+  if (!text) return Number.NaN
+  const negative = text.startsWith('-')
+  text = text.replace(/^[+-]/, '')
+  const dotParts = text.split('.')
+  const commaParts = text.split(',')
+  if (dotParts.length > 2 && dotParts.slice(1).every((part) => part.length === 3)) text = `${dotParts[0]}.${dotParts.slice(1).join('')}`
+  else if (commaParts.length > 2 && commaParts.slice(1).every((part) => part.length === 3)) text = `${commaParts[0]}.${commaParts.slice(1).join('')}`
+  else if (text.includes(',') && !text.includes('.')) text = text.replace(',', '.')
+  else if (text.includes(',') && text.includes('.')) {
+    const decimalIndex = Math.max(text.lastIndexOf('.'), text.lastIndexOf(','))
+    text = `${text.slice(0, decimalIndex).replace(/[.,]/g, '')}.${text.slice(decimalIndex + 1).replace(/[.,]/g, '')}`
+  }
+  const number = Number(`${negative ? '-' : ''}${text}`)
+  return Number.isFinite(number) ? number : Number.NaN
+}
+
+function shopMapUrl(shop: Shop) {
+  const latitude = parseCoordinate(shop.latitude)
+  const longitude = parseCoordinate(shop.longitude)
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return ''
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`
+}
+
+function shopThumbnailUrl(shop: Shop) {
+  if (shop.photo_file_id) return `https://drive.google.com/thumbnail?id=${encodeURIComponent(shop.photo_file_id)}&sz=w240`
+  return shop.photo_url || ''
 }
 
 function todayInput() {
@@ -219,7 +250,7 @@ function App() {
 
   const visibleNavItems = navItems.filter((item) => {
     if (isAccountant) return item.id === 'payments'
-    if (item.id === 'payments') return false
+    if (item.id === 'payments') return isAdmin
     return true
   })
   const title = navItems.find((item) => item.id === activeView)?.label || 'Tổng quan'
@@ -334,7 +365,7 @@ function Overview({ dashboard, dateFrom, dateTo, salesFilter, salesUsers, canFil
     <div className="metrics-grid">{cards.map((card) => <div className="metric-card" key={card.label}><div className={`metric-icon ${card.tone}`}><Icon name={card.icon} size={20} /></div><div className="metric-copy"><span>{card.label}</span><strong>{card.value}</strong><small>{card.meta}</small></div><div className="metric-menu">•••</div></div>)}</div>
     <div className="overview-grid">
       <div className="panel chart-panel"><div className="panel-heading"><div><h3>Nhịp vận hành</h3><span>Doanh thu và sản lượng trong kỳ</span></div><span className="legend"><i className="legend-dot revenue" /> Doanh thu <i className="legend-dot kg" /> Sản lượng</span></div><ActivityChart series={dashboard.series} /></div>
-      <div className="panel quick-panel"><div className="panel-heading"><div><h3>Thao tác nhanh</h3><span>Cập nhật dữ liệu tại hiện trường</span></div></div><button className="quick-action" onClick={onOpenRoute}><span className="quick-icon route-bg"><Icon name="route" /></span><span><strong>Ghi nhận đi tuyến</strong><small>GPS, ảnh và thông tin quán</small></span><Icon name="chevron" size={17} /></button><button className="quick-action" onClick={onOpenOrder}><span className="quick-icon order-bg"><Icon name="cart" /></span><span><strong>Tạo đơn hàng mới</strong><small>Ghi nhận sản lượng bán</small></span><Icon name="chevron" size={17} /></button><button className="quick-action" onClick={() => window.open('https://drive.google.com/drive/folders/1xJsrPnZNltFQs4djPO-SM7_FrwoSxu8r', '_blank')}><span className="quick-icon drive-bg"><Icon name="camera" /></span><span><strong>Mở thư mục hình ảnh</strong><small>Google Drive lưu ảnh visit</small></span><Icon name="chevron" size={17} /></button></div>
+      <div className="panel quick-panel"><div className="panel-heading"><div><h3>Thao tác nhanh</h3><span>Cập nhật dữ liệu tại hiện trường</span></div></div><button className="quick-action" onClick={onOpenRoute}><span className="quick-icon route-bg"><Icon name="route" /></span><span><strong>Ghi nhận đi tuyến</strong><small>Check-in tại quán bằng GPS</small></span><Icon name="chevron" size={17} /></button><button className="quick-action" onClick={onOpenOrder}><span className="quick-icon order-bg"><Icon name="cart" /></span><span><strong>Tạo đơn hàng mới</strong><small>Ghi nhận sản lượng bán</small></span><Icon name="chevron" size={17} /></button></div>
     </div>
     <div className="overview-grid bottom-grid"><div className="panel"><div className="panel-heading"><div><h3>Hiệu suất KPI</h3><span>Tiến độ các chỉ tiêu đang áp dụng</span></div><a className="text-link">Xem chi tiết <Icon name="chevron" size={14} /></a></div><EmptyState icon="target" title="Chưa có dữ liệu KPI" description="Khi Admin thiết lập mục tiêu, tiến độ sẽ hiển thị tại đây." /></div><div className="panel"><div className="panel-heading"><div><h3>Hoạt động gần đây</h3><span>Các cập nhật mới nhất</span></div><a className="text-link">Xem tất cả <Icon name="chevron" size={14} /></a></div><EmptyState icon="file" title="Chưa có hoạt động" description="Dữ liệu sẽ xuất hiện sau khi có lượt ghé hoặc đơn hàng." /></div></div>
   </>
@@ -351,15 +382,49 @@ function EmptyState({ icon, title, description, action, actionLabel }: { icon: I
 }
 
 function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onVisit: () => void }) {
-  return <><PageIntro eyebrow="KHÁCH HÀNG" title="Danh sách quán" description="Hồ sơ quán, GPS cố định, ảnh nhận diện và giá trị kinh doanh theo từng điểm bán." action={onAdd} actionLabel="Thêm quán" /><div className="table-toolbar"><div className="search-field"><Icon name="search" size={17} /><input placeholder="Tìm theo tên quán, địa chỉ..." /><span>{shops.length} kết quả</span></div><button className="secondary-button" onClick={onVisit}><Icon name="route" size={16} /> Ghi nhận check-in</button></div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{shops.map((shop) => <tr key={shop.shop_id}><td><div className="shop-cell"><div className="shop-avatar">{shop.shop_name?.slice(0, 1).toUpperCase() || 'Q'}</div><div><strong>{shop.shop_name || 'Chưa đặt tên'}</strong><small>{shop.status || 'Đang hoạt động'}{String(shop.gps_locked) === 'true' ? ' · GPS đã khóa' : ' · Chưa có GPS'}</small></div></div></td><td><div className="address-cell">{shop.address || 'Chưa cập nhật'}{shop.latitude && shop.longitude && <a href={`https://www.google.com/maps?q=${shop.latitude},${shop.longitude}`} target="_blank" rel="noreferrer"><Icon name="map" size={13} /> Mở bản đồ</a>}</div></td><td>{shop.photo_url ? <a className="photo-indicator" href={shop.photo_url} target="_blank" rel="noreferrer" title="Mở ảnh quán"><Icon name="camera" size={16} /></a> : <span className="photo-missing">—</span>}</td><td>{shop.salesperson_name || salesUsers.find((user) => user.user_id === shop.salesperson_id)?.full_name || 'Chưa phân công'}</td><td>{formatCurrency(shop.revenue)} đ</td><td>{shop.avg_monthly_orders || 0}</td><td>{formatDate(shop.last_order_at)}</td><td>{formatDate(shop.last_visit_at)}</td><td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && String(shop.gps_locked) === 'true' && String(shop.gps_edit_granted) !== 'true' && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Cấp sửa GPS</button>}{isAdmin && String(shop.gps_edit_granted) === 'true' && <span className="gps-granted">Đã cấp</span>}</td></tr>)}</tbody></table>{shops.length === 0 && <EmptyState icon="store" title="Chưa có hồ sơ quán" description="Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng." action={onAdd} actionLabel="Thêm quán đầu tiên" />}</div></div></>
+  return <>
+    <PageIntro eyebrow="KHÁCH HÀNG" title="Danh sách quán" description="Hồ sơ quán, GPS cố định, ảnh nhận diện và giá trị kinh doanh theo từng điểm bán." action={onAdd} actionLabel="Thêm quán" />
+    <div className="table-toolbar"><div className="search-field"><Icon name="search" size={17} /><input placeholder="Tìm theo tên quán, địa chỉ..." /><span>{shops.length} kết quả</span></div><button className="secondary-button" onClick={onVisit}><Icon name="route" size={16} /> Ghi nhận check-in</button></div>
+    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh quán</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{shops.map((shop) => {
+      const mapUrl = shopMapUrl(shop)
+      const thumbnailUrl = shopThumbnailUrl(shop)
+      return <tr key={shop.shop_id}>
+        <td><div className="shop-cell"><div className="shop-avatar">{shop.shop_name?.slice(0, 1).toUpperCase() || 'Q'}</div><div><strong>{shop.shop_name || 'Chưa đặt tên'}</strong><small>{shop.status || 'Đang hoạt động'}{String(shop.gps_locked) === 'true' ? ' · GPS đã khóa' : ' · Chưa có GPS'}</small></div></div></td>
+        <td><div className="address-cell">{shop.address || 'Chưa cập nhật'}{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer"><Icon name="map" size={13} /> Mở bản đồ</a>}</div></td>
+        <td>{thumbnailUrl ? <a className="photo-preview" href={shop.photo_url || thumbnailUrl} target="_blank" rel="noreferrer" title="Mở ảnh quán"><img className="photo-thumb" src={thumbnailUrl} alt={`Ảnh ${shop.shop_name || 'quán'}`} loading="lazy" /><span>Xem ảnh</span></a> : <span className="photo-missing">Chưa có</span>}</td>
+        <td>{shop.salesperson_name || salesUsers.find((user) => user.user_id === shop.salesperson_id)?.full_name || 'Chưa phân công'}</td><td>{formatCurrency(shop.revenue)} đ</td><td>{shop.avg_monthly_orders || 0}</td><td>{formatDate(shop.last_order_at)}</td><td>{formatDate(shop.last_visit_at)}</td>
+        <td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && String(shop.gps_locked) === 'true' && String(shop.gps_edit_granted) !== 'true' && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Cấp sửa GPS</button>}{isAdmin && String(shop.gps_edit_granted) === 'true' && <span className="gps-granted">Đã cấp</span>}</td>
+      </tr>
+    })}</tbody></table>{shops.length === 0 && <EmptyState icon="store" title="Chưa có hồ sơ quán" description="Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng." action={onAdd} actionLabel="Thêm quán đầu tiên" />}</div></div>
+  </>
 }
 
 function RoutesView({ shops, salesUsers, currentUser, isAdmin, onSaved, showToast }: { shops: Shop[]; salesUsers: User[]; currentUser: User; isAdmin: boolean; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
   const [shopId, setShopId] = useState('')
   const [salespersonId, setSalespersonId] = useState(isAdmin ? '' : currentUser.user_id)
   const [visitDate, setVisitDate] = useState(todayInput())
+  const [reportDateFrom, setReportDateFrom] = useState(getDateDaysAgo(7))
+  const [reportDateTo, setReportDateTo] = useState(todayInput())
+  const [reportVisitCount, setReportVisitCount] = useState(0)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportRefresh, setReportRefresh] = useState(0)
   const [saving, setSaving] = useState(false)
   const selectedShop = shops.find((shop) => shop.shop_id === shopId)
+  const reportSalespersonId = isAdmin ? salespersonId : currentUser.user_id
+
+  useEffect(() => {
+    let active = true
+    setReportLoading(true)
+    void apiRequest<{ visits?: unknown[] }>('getReports', { dateFrom: reportDateFrom, dateTo: reportDateTo, salespersonId: reportSalespersonId }).then((report) => {
+      if (active) setReportVisitCount(Array.isArray(report?.visits) ? report.visits.length : 0)
+    }).catch(() => {
+      if (active) setReportVisitCount(0)
+    }).finally(() => {
+      if (active) setReportLoading(false)
+    })
+    return () => { active = false }
+  }, [reportDateFrom, reportDateTo, reportSalespersonId, reportRefresh])
+
   const checkIn = () => {
     if (!shopId || (isAdmin && !salespersonId)) return showToast('Vui lòng chọn quán và Sales', 'error')
     if (!navigator.geolocation) return showToast('Thiết bị không hỗ trợ GPS', 'error')
@@ -368,16 +433,28 @@ function RoutesView({ shops, salesUsers, currentUser, isAdmin, onSaved, showToas
       try {
         const result = await apiRequest<{ distance_meters?: number }>('checkIn', { shop_id: shopId, salesperson_id: salespersonId, visit_date: visitDate, latitude: position.coords.latitude, longitude: position.coords.longitude })
         showToast(`Check-in hợp lệ${result?.distance_meters !== undefined ? ` · cách quán ${result.distance_meters} m` : ''}`)
+        setReportRefresh((value) => value + 1)
         onSaved()
       } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể check-in', 'error') }
       finally { setSaving(false) }
     }, () => { setSaving(false); showToast('Không lấy được vị trí. Hãy cấp quyền GPS cho trình duyệt.', 'error') }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
   }
-  return <><PageIntro eyebrow="HIỆN TRƯỜNG" title="Đi tuyến" description="Check-in chỉ được ghi nhận khi Sales đứng trong bán kính 50 m quanh GPS đã khóa của quán." /><div className="route-layout"><form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); checkIn() }}><div className="panel-heading"><div><h3>Phiếu check-in tuyến</h3><span>Hệ thống tự lấy GPS hiện tại và đối chiếu với GPS quán</span></div><span className="form-step">50 m</span></div><div className="form-grid"><label className="field wide"><span>Quán <b>*</b></span><select value={shopId} onChange={(event) => setShopId(event.target.value)}><option value="">Chọn quán cần ghé</option>{shops.map((shop) => <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>)}</select></label><label className="field"><span>Sales phụ trách <b>*</b></span><select value={isAdmin ? salespersonId : currentUser.user_id} disabled={!isAdmin} onChange={(event) => setSalespersonId(event.target.value)}><option value="">Chọn Sales</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select></label><label className="field"><span>Ngày ghé</span><input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} /></label><div className="field wide"><span>GPS quán đã lưu</span><div className="gps-readonly">{selectedShop?.latitude && selectedShop?.longitude ? `${selectedShop.latitude}, ${selectedShop.longitude}` : 'Quán chưa có GPS — cập nhật tại Danh sách quán'}</div></div><div className="field wide"><span>Điều kiện ghi nhận</span><div className="checkin-rule"><Icon name="map" size={17} /> Bấm “Check-in tại vị trí hiện tại”; hệ thống sẽ từ chối nếu vượt quá 50 m.</div></div></div><div className="form-actions"><span><Icon name="check" size={15} /> Không nhập GPS, ảnh, nhà cung cấp hoặc ghi chú tại đây</span><button type="submit" className="primary-button" disabled={saving || !selectedShop}>{saving ? 'Đang kiểm tra vị trí...' : 'Check-in tại vị trí hiện tại'}</button></div></form><div className="panel route-aside"><div className="aside-illustration"><Icon name="map" size={38} /></div><h3>Chống check-in hộ</h3><p>GPS quán được khóa sau lần ghi nhận đầu tiên. KPI đi tuyến chỉ tăng khi hệ thống xác minh khoảng cách không quá 50 m.</p><div className="aside-list"><div><span className="aside-number">01</span><span>Chọn đúng quán trong tuyến</span></div><div><span className="aside-number">02</span><span>Cho phép trình duyệt lấy vị trí</span></div><div><span className="aside-number">03</span><span>Check-in tại quán</span></div></div></div></div></>
+  const savedLatitude = parseCoordinate(selectedShop?.latitude)
+  const savedLongitude = parseCoordinate(selectedShop?.longitude)
+  return <>
+    <PageIntro eyebrow="HIỆN TRƯỜNG" title="Đi tuyến" description="Check-in chỉ được ghi nhận khi Sales đứng trong bán kính 50 m quanh GPS đã khóa của quán." />
+    <div className="route-report panel"><div className="route-report-heading"><div><h3>Báo cáo đi tuyến</h3><span>Lọc số lượt check-in đã xác minh</span></div><div className="route-report-total"><strong>{reportLoading ? '…' : reportVisitCount}</strong><span>Tổng lượt check-in</span></div></div><div className="route-report-filters"><label className="field"><span>Từ ngày</span><input type="date" value={reportDateFrom} onChange={(event) => setReportDateFrom(event.target.value)} /></label><label className="field"><span>Đến ngày</span><input type="date" value={reportDateTo} onChange={(event) => setReportDateTo(event.target.value)} /></label>{isAdmin && <label className="field"><span>Sales</span><select value={salespersonId} onChange={(event) => setSalespersonId(event.target.value)}><option value="">Tất cả Sales</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select></label>}</div></div>
+    <div className="route-layout"><form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); checkIn() }}><div className="panel-heading"><div><h3>Phiếu check-in tuyến</h3><span>Hệ thống tự lấy GPS hiện tại và đối chiếu với GPS quán</span></div><span className="form-step">50 m</span></div><div className="form-grid"><label className="field wide"><span>Quán <b>*</b></span><select value={shopId} onChange={(event) => setShopId(event.target.value)}><option value="">Chọn quán cần ghé</option>{shops.map((shop) => <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>)}</select></label><label className="field"><span>Sales phụ trách <b>*</b></span><select value={isAdmin ? salespersonId : currentUser.user_id} disabled={!isAdmin} onChange={(event) => setSalespersonId(event.target.value)}><option value="">Chọn Sales</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select></label><label className="field"><span>Ngày ghé</span><input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} /></label><div className="field wide"><span>GPS quán đã lưu</span><div className="gps-readonly">{Number.isFinite(savedLatitude) && Number.isFinite(savedLongitude) ? `${savedLatitude.toFixed(6)}, ${savedLongitude.toFixed(6)}` : 'Quán chưa có GPS — cập nhật tại Danh sách quán'}</div></div><div className="field wide"><span>Điều kiện ghi nhận</span><div className="checkin-rule"><Icon name="map" size={17} /> Bấm “Check-in tại vị trí hiện tại”; hệ thống sẽ từ chối nếu vượt quá 50 m.</div></div></div><div className="form-actions"><span><Icon name="check" size={15} /> Không nhập GPS, ảnh, nhà cung cấp hoặc ghi chú tại đây</span><button type="submit" className="primary-button" disabled={saving || !selectedShop}>{saving ? 'Đang kiểm tra vị trí...' : 'Check-in tại vị trí hiện tại'}</button></div></form><div className="panel route-aside"><div className="aside-illustration"><Icon name="map" size={38} /></div><h3>Chống check-in hộ</h3><p>GPS quán được khóa sau lần ghi nhận đầu tiên. KPI đi tuyến chỉ tăng khi hệ thống xác minh khoảng cách không quá 50 m.</p><div className="aside-list"><div><span className="aside-number">01</span><span>Chọn đúng quán trong tuyến</span></div><div><span className="aside-number">02</span><span>Cho phép trình duyệt lấy vị trí</span></div><div><span className="aside-number">03</span><span>Check-in tại quán</span></div></div></div></div>
+  </>
 }
 
 function OrdersView({ orders, shops, canCreate, onAdd }: { orders: Order[]; shops: Shop[]; canCreate: boolean; onAdd: () => void }) {
-  return <><PageIntro eyebrow="BÁN HÀNG" title="Đơn hàng" description="Theo dõi sản lượng Flamen theo từng quán và nhân viên Sales." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng" actionIcon="cart" /><div className="summary-strip"><div><span>Tổng đơn trong kỳ</span><strong>{orders.length}</strong></div><div><span>Tổng sản lượng</span><strong>{orders.reduce((sum, order) => sum + Number(order.quantity_kg || 0), 0)} kg</strong></div><div><span>Đã thanh toán</span><strong>{orders.filter((order) => order.payment_status === 'Đã thanh toán').length}</strong></div><div><span>Chờ thanh toán</span><strong>{orders.filter((order) => order.payment_status !== 'Đã thanh toán').length}</strong></div></div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sản phẩm</th><th>Số lượng</th><th>Thành tiền</th><th>Ngày đặt</th><th>Thanh toán</th></tr></thead><tbody>{orders.map((order) => <tr key={order.order_id}><td><span className="mono">{order.order_id}</span></td><td>{order.shop_name || shops.find((shop) => shop.shop_id === order.shop_id)?.shop_name || '—'}</td><td>{order.product_type}</td><td><strong>{order.quantity_kg} kg</strong></td><td>{formatCurrency(order.total_amount)} đ</td><td>{formatDate(order.order_date)}</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td></tr>)}</tbody></table>{orders.length === 0 && <EmptyState icon="cart" title="Chưa có đơn hàng" description="Các đơn hàng do Sales ghi nhận sẽ hiển thị tại đây." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng đầu tiên" />}</div></div></>
+  const totalSold = orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0)
+  return <>
+    <PageIntro eyebrow="BÁN HÀNG" title="Đơn hàng" description="Theo dõi sản lượng Flamen theo từng quán và nhân viên Sales." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng" actionIcon="cart" />
+    <div className="summary-strip order-summary"><div><span>Tổng đơn trong kỳ</span><strong>{orders.length}</strong></div><div><span>Tổng sản lượng</span><strong>{orders.reduce((sum, order) => sum + Number(order.quantity_kg || 0), 0)} kg</strong></div><div><span>Tổng tiền đã bán</span><strong>{formatCurrency(totalSold)} đ</strong></div><div><span>Đã thanh toán</span><strong>{orders.filter((order) => order.payment_status === 'Đã thanh toán').length}</strong></div><div><span>Chờ thanh toán</span><strong>{orders.filter((order) => order.payment_status !== 'Đã thanh toán').length}</strong></div></div>
+    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales bán</th><th>Sản phẩm</th><th>Số lượng</th><th>Thành tiền</th><th>Ngày đặt</th><th>Thanh toán</th></tr></thead><tbody>{orders.map((order) => <tr key={order.order_id}><td><span className="mono">{order.order_id}</span></td><td>{order.shop_name || shops.find((shop) => shop.shop_id === order.shop_id)?.shop_name || '—'}</td><td>{order.salesperson_name || '—'}</td><td>{order.product_type}</td><td><strong>{order.quantity_kg} kg</strong></td><td>{formatCurrency(order.total_amount)} đ</td><td>{formatDate(order.order_date)}</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td></tr>)}</tbody></table>{orders.length === 0 && <EmptyState icon="cart" title="Chưa có đơn hàng" description="Các đơn hàng do Sales ghi nhận sẽ hiển thị tại đây." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng đầu tiên" />}</div></div>
+  </>
 }
 
 function PaymentsView({ orders, onConfirm }: { orders: Order[]; onConfirm: (order: Order) => void }) {
