@@ -79,7 +79,7 @@ function route_(action, payload, user) {
     case 'getKpiTargets': return getKpiTargets_(payload);
     case 'createKpi': return createKpi_(payload);
     case 'createKpiTarget': return createKpiTarget_(payload);
-    case 'updateKpi': return updateRow_('KPI_DEFINITIONS', payload, 'kpi_id');
+    case 'updateKpi': return updateKpi_(payload);
     case 'updateKpiTarget': return updateRow_('KPI_TARGETS', payload, 'target_id');
     case 'getDashboard': return getDashboard_(payload);
     case 'getReports': return getReports_(payload);
@@ -434,10 +434,21 @@ function createKpi_(payload) {
   const row = normalize_(payload, APP.sheets.KPI_DEFINITIONS);
   row.kpi_id = row.kpi_id || id_('KPI');
   row.kpi_code = row.kpi_code || slug_(row.kpi_name).toUpperCase();
+  row.data_source = normalizeKpiSource_(row.data_source || 'VISITS');
+  row.calculation_type = String(row.calculation_type || 'COUNT').trim().toUpperCase();
   row.active = row.active === false || row.active === 'false' ? false : true;
   appendRow_('KPI_DEFINITIONS', row);
   audit_('createKpi', row.kpi_id, row);
   return row;
+}
+
+function updateKpi_(payload) {
+  if (!payload.kpi_id) throw new Error('Thiếu kpi_id.');
+  const row = normalize_(payload, APP.sheets.KPI_DEFINITIONS);
+  if (row.data_source !== undefined) row.data_source = normalizeKpiSource_(row.data_source || 'VISITS');
+  if (row.calculation_type !== undefined) row.calculation_type = String(row.calculation_type || 'COUNT').trim().toUpperCase();
+  if (row.active !== undefined) row.active = row.active === false || row.active === 'false' ? false : true;
+  return updateRow_('KPI_DEFINITIONS', row, 'kpi_id');
 }
 
 function createKpiTarget_(payload) {
@@ -505,24 +516,33 @@ function getKpiTargets_(payload) {
 
 function getKpiProgress_(payload) {
   const definitions = getRows_('KPI_DEFINITIONS');
-  const targets = getRows_('KPI_TARGETS').filter(function(target) {
+  const allTargets = getRows_('KPI_TARGETS').filter(function(target) {
     const ownerOk = !payload.salespersonId || !target.user_id || target.user_id === payload.salespersonId;
+    return ownerOk;
+  });
+  const targets = allTargets.filter(function(target) {
     const dateOk = (!payload.dateFrom || !target.end_date || target.end_date >= payload.dateFrom) && (!payload.dateTo || !target.start_date || target.start_date <= payload.dateTo);
-    return ownerOk && dateOk;
+    return dateOk;
   });
   const orders = filterRows_(getRows_('ORDERS'), payload);
   const visits = filterRows_(getRows_('VISITS'), payload);
   const records = filterRows_(getRows_('KPI_RECORDS'), payload);
+  const shops = filterRows_(getRows_('SHOPS'), payload);
   return definitions.map(function(definition) {
     const definitionTargets = targets.filter(function(target) { return target.kpi_id === definition.kpi_id; });
-    const targetValue = definitionTargets.reduce(function(total, target) { return total + (Number(target.target_value) || 0); }, 0);
-    const target = definitionTargets[0] || { kpi_id: definition.kpi_id, user_id: payload.salespersonId || '' };
-    const actual = calculateKpiActual_(definition, target, orders, visits, records);
+    const allDefinitionTargets = allTargets.filter(function(target) { return target.kpi_id === definition.kpi_id; });
+    const displayTargets = definitionTargets.length ? definitionTargets : allDefinitionTargets;
+    const targetValue = displayTargets.reduce(function(total, target) { return total + (Number(target.target_value) || 0); }, 0);
+    const target = displayTargets[0] || { kpi_id: definition.kpi_id, user_id: payload.salespersonId || '' };
+    const actual = calculateKpiActual_(definition, target, orders, visits, records, shops);
     return Object.assign({}, definition, {
       target_value: targetValue,
       actual_value: Math.round(actual * 100) / 100,
-      progress: targetValue > 0 ? Math.min(100, Math.round(actual / targetValue * 100)) : 0,
-      target_count: definitionTargets.length
+      progress: definitionTargets.length && targetValue > 0 ? Math.min(100, Math.round(actual / targetValue * 100)) : 0,
+      target_count: displayTargets.length,
+      target_status: definitionTargets.length ? 'ACTIVE' : allDefinitionTargets.length ? 'OUTSIDE_PERIOD' : 'UNASSIGNED',
+      target_start_date: target.start_date || '',
+      target_end_date: target.end_date || ''
     });
   });
 }
@@ -589,20 +609,22 @@ function calculateKpiCompletion_(payload) {
   const orders = filterRows_(getRows_('ORDERS'), payload);
   const visits = filterRows_(getRows_('VISITS'), payload);
   const records = filterRows_(getRows_('KPI_RECORDS'), payload);
+  const shops = filterRows_(getRows_('SHOPS'), payload);
   let total = 0;
   targets.forEach(function(target) {
     const definition = definitions[target.kpi_id] || {};
-    const actual = calculateKpiActual_(definition, target, orders, visits, records);
+    const actual = calculateKpiActual_(definition, target, orders, visits, records, shops);
     total += Math.min(100, actual / Number(target.target_value) * 100);
   });
   return Math.round(total / targets.length);
 }
 
-function calculateKpiActual_(definition, target, orders, visits, records) {
-  const source = String(definition.data_source || '').toUpperCase();
-  const calculation = String(definition.calculation_type || 'COUNT').toUpperCase();
-  if (calculation === 'MANUAL') return sum_(records.filter(function(record) { return record.kpi_id === target.kpi_id; }), 'actual_value');
-  const rows = source === 'ORDERS' ? orders : source === 'VISITS' ? visits : source === 'KPI_RECORDS' ? records : [];
+function calculateKpiActual_(definition, target, orders, visits, records, shops) {
+  const source = normalizeKpiSource_(definition.data_source);
+  const calculation = String(definition.calculation_type || 'COUNT').trim().toUpperCase();
+  const recordRows = records.filter(function(record) { return record.kpi_id === target.kpi_id && (!target.user_id || record.user_id === target.user_id); });
+  if (calculation === 'MANUAL') return sum_(recordRows, 'actual_value');
+  const rows = source === 'ORDERS' ? orders : source === 'VISITS' ? visits : source === 'SHOPS' ? shops : source === 'KPI_RECORDS' || source === 'MANUAL' ? records : [];
   const scopedRows = rows.filter(function(row) { return !target.user_id || row.salesperson_id === target.user_id || row.user_id === target.user_id; });
   if (calculation === 'DISTINCT_COUNT') return Object.keys(indexBy_(scopedRows, 'shop_id')).length;
   if (calculation === 'SUM') {
@@ -614,6 +636,15 @@ function calculateKpiActual_(definition, target, orders, visits, records) {
   }
   if (calculation === 'AVG') return scopedRows.length ? sum_(scopedRows, 'quantity_kg') / scopedRows.length : 0;
   return scopedRows.length;
+}
+function normalizeKpiSource_(value) {
+  const source = String(value || '').trim();
+  const key = slug_(source);
+  if (key === 'VISIT' || key === 'VISITS' || key === 'CHECKIN' || key === 'CHECK_IN' || key === 'DI_TUYEN') return 'VISITS';
+  if (key === 'ORDER' || key === 'ORDERS' || key === 'DON_HANG') return 'ORDERS';
+  if (key === 'SHOP' || key === 'SHOPS' || key === 'DANH_SACH_QUAN') return 'SHOPS';
+  if (key === 'MANUAL' || key === 'KPI_RECORD' || key === 'KPI_RECORDS' || key === 'KPI_THU_CONG') return 'KPI_RECORDS';
+  return source.toUpperCase();
 }
 function toMatrix_(headers, rows) { return [headers].concat(rows.map(function(row) { return headers.map(function(header) { return row[header] === undefined ? '' : row[header]; }); })); }
 function parseBody_(e) { if (!e || !e.postData || !e.postData.contents) return {}; try { return JSON.parse(e.postData.contents); } catch (_) { return e.parameter || {}; } }

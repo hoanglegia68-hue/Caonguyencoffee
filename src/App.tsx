@@ -58,8 +58,11 @@ type Order = {
 
 type Kpi = {
   kpi_id: string
+  kpi_code?: string
   kpi_name: string
+  description?: string
   unit: string
+  data_source?: string
   calculation_type: string
   active: boolean | string
 }
@@ -69,6 +72,9 @@ type KpiProgress = Kpi & {
   actual_value?: number
   progress?: number
   target_count?: number
+  target_status?: string
+  target_start_date?: string
+  target_end_date?: string
 }
 
 type KpiTarget = {
@@ -195,6 +201,11 @@ function getDateDaysAgo(days: number) {
 
 function normalizeRole(role?: string) { return String(role || '').trim().toLowerCase() }
 function roleLabel(role?: string) { const normalized = normalizeRole(role); return normalized === 'admin' ? 'Admin' : normalized === 'sales' ? 'Sales' : 'Kế toán' }
+function kpiSourceLabel(source?: string) {
+  const value = String(source || '').trim().toUpperCase()
+  const key = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/Đ/g, 'D').replace(/[^A-Z0-9]+/g, '_')
+  return key === 'VISITS' || key === 'VISIT' || key === 'CHECKIN' || key === 'CHECK_IN' || key === 'DI_TUYEN' ? 'Đi tuyến / Check-in' : key === 'ORDERS' || key === 'ORDER' || key === 'DON_HANG' ? 'Đơn hàng' : key === 'SHOPS' || key === 'SHOP' || key === 'DANH_SACH_QUAN' ? 'Danh sách quán' : key === 'KPI_RECORDS' || key === 'KPI_RECORD' || key === 'MANUAL' || key === 'KPI_THU_CONG' ? 'KPI thủ công' : value || 'Chưa cấu hình'
+}
 
 function App() {
   const [session, setSession] = useState<AuthSession | null>(() => getStoredSession())
@@ -216,8 +227,9 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [connected, setConnected] = useState(true)
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
-  const [modal, setModal] = useState<'shop' | 'visit' | 'order' | 'kpi' | 'kpi-target' | null>(null)
+  const [modal, setModal] = useState<'shop' | 'visit' | 'order' | 'kpi' | 'kpi-edit' | 'kpi-target' | null>(null)
   const [editingShop, setEditingShop] = useState<Shop | null>(null)
+  const [editingKpi, setEditingKpi] = useState<Kpi | null>(null)
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({ message, type })
@@ -363,7 +375,7 @@ function App() {
           {activeView === 'routes' && <RoutesView shops={shops} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onSaved={() => { setModal(null); void loadData() }} showToast={showToast} />}
           {activeView === 'orders' && <OrdersView orders={orders} shops={shops} canCreate={isAdmin || isSales} onAdd={() => setModal('order')} />}
           {activeView === 'payments' && <PaymentsView orders={orders} salesUsers={paymentSalesUsers} dateFrom={paymentDateFrom} dateTo={paymentDateTo} salesFilter={paymentSalesFilter} onDateFrom={setPaymentDateFrom} onDateTo={setPaymentDateTo} onSales={setPaymentSalesFilter} onConfirm={async (order) => { try { await apiRequest('confirmPayment', { order_id: order.order_id, amount: order.total_amount, payment_method: 'Chuyển khoản' }); showToast('Đã xác nhận thanh toán'); void loadData() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xác nhận thanh toán', 'error') } }} />}
-          {activeView === 'kpi' && <KpiView kpis={kpis} kpiTargets={kpiTargets} canManage={isAdmin} onAdd={() => setModal('kpi')} onAssign={() => setModal('kpi-target')} />}
+          {activeView === 'kpi' && <KpiView kpis={kpis} kpiTargets={kpiTargets} canManage={isAdmin} onAdd={() => { setEditingKpi(null); setModal('kpi') }} onEdit={(kpi) => { setEditingKpi(kpi); setModal('kpi-edit') }} onAssign={() => setModal('kpi-target')} />}
           {activeView === 'reports' && <ReportsView dateFrom={dateFrom} dateTo={dateTo} salesFilter={isAdmin ? salesFilter : 'all'} showToast={showToast} />}
         </div>
       </main>
@@ -371,7 +383,7 @@ function App() {
       {modal === 'shop' && <ShopModal shop={editingShop || undefined} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onClose={() => { setModal(null); setEditingShop(null) }} onSaved={saveShop} showToast={showToast} />}
       {modal === 'visit' && <VisitModal shops={shops} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onClose={() => setModal(null)} onSaved={() => { setModal(null); void loadData(); showToast('Đã ghi nhận check-in hợp lệ') }} showToast={showToast} />}
       {modal === 'order' && <OrderModal shops={shops} onClose={() => setModal(null)} onSaved={() => { setModal(null); void loadData(); showToast('Đã tạo đơn hàng') }} showToast={showToast} />}
-      {modal === 'kpi' && <KpiModal onClose={() => setModal(null)} onSaved={() => { setModal(null); void loadData(); showToast('Đã tạo KPI mới') }} showToast={showToast} />}
+      {(modal === 'kpi' || modal === 'kpi-edit') && <KpiModal kpi={modal === 'kpi-edit' ? editingKpi || undefined : undefined} onClose={() => { setModal(null); setEditingKpi(null) }} onSaved={() => { setModal(null); setEditingKpi(null); void loadData(); showToast(modal === 'kpi-edit' ? 'Đã cập nhật KPI' : 'Đã tạo KPI mới') }} showToast={showToast} />}
       {modal === 'kpi-target' && <KpiTargetModal kpis={kpis} users={users} onClose={() => setModal(null)} onSaved={() => { setModal(null); void loadData(); showToast('Đã giao KPI') }} showToast={showToast} />}
       {toast && <div className={`toast toast-${toast.type}`}><span className="toast-icon"><Icon name={toast.type === 'success' ? 'check' : toast.type === 'error' ? 'close' : 'trend'} size={16} /></span>{toast.message}</div>}
     </div>
@@ -433,7 +445,7 @@ function EmptyState({ icon, title, description, action, actionLabel }: { icon: I
 
 function KpiProgressList({ items }: { items: KpiProgress[] }) {
   if (!items.length) return <EmptyState icon="target" title="Chưa có KPI khai báo" description="Admin hãy tạo KPI trong Menu KPI & mục tiêu." />
-  return <div className="kpi-progress-list">{items.map((item) => <div className="kpi-progress-row" key={item.kpi_id}><div className="kpi-progress-copy"><strong>{item.kpi_name}</strong><span>{item.actual_value || 0} / {item.target_value || 0} {item.unit || ''}{item.target_count ? ` · ${item.target_count} mục tiêu` : ' · Chưa giao mục tiêu'}</span></div><div className="kpi-progress-track"><span style={{ width: `${Math.min(100, Number(item.progress || 0))}%` }} /></div><strong className="kpi-progress-value">{Number(item.progress || 0)}%</strong></div>)}</div>
+  return <div className="kpi-progress-list">{items.map((item) => { const targetNote = item.target_status === 'OUTSIDE_PERIOD' ? ' · Mục tiêu ngoài kỳ lọc' : item.target_count ? ` · ${item.target_count} mục tiêu` : ' · Chưa giao mục tiêu'; return <div className="kpi-progress-row" key={item.kpi_id}><div className="kpi-progress-copy"><strong>{item.kpi_name}</strong><span>{item.actual_value || 0} / {item.target_value || 0} {item.unit || ''}{targetNote}</span></div><div className="kpi-progress-track"><span style={{ width: `${Math.min(100, Number(item.progress || 0))}%` }} /></div><strong className="kpi-progress-value">{Number(item.progress || 0)}%</strong></div> })}</div>
 }
 
 function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRequestGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onRequestGps: (shop: Shop) => void; onVisit: () => void }) {
@@ -554,8 +566,8 @@ function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDat
   </>
 }
 
-function KpiView({ kpis, kpiTargets, canManage, onAdd, onAssign }: { kpis: Kpi[]; kpiTargets: KpiTarget[]; canManage: boolean; onAdd: () => void; onAssign: () => void }) {
-  return <><PageIntro eyebrow="HIỆU SUẤT" title="KPI & mục tiêu" description="Thiết lập chỉ tiêu linh hoạt cho Sales, nhóm hoặc toàn công ty." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI" actionIcon="target" /><div className="kpi-info"><div className="kpi-info-icon"><Icon name="target" size={20} /></div><div><strong>KPI được thiết kế mở rộng</strong><span>Sales chỉ xem KPI của mình; Admin có quyền tạo và giao mục tiêu.</span></div>{canManage && <button className="secondary-button" onClick={onAssign}><Icon name="users" size={15} /> Giao KPI cho Sales</button>}</div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên KPI</th><th>Đơn vị</th><th>Cách tính</th><th>Trạng thái</th><th>Đã giao</th><th>Mục tiêu kỳ hiện tại</th><th /></tr></thead><tbody>{kpis.map((kpi) => { const targets = kpiTargets.filter((target) => target.kpi_id === kpi.kpi_id); return <tr key={kpi.kpi_id}><td><div className="kpi-name"><span className="kpi-bullet" /><strong>{kpi.kpi_name}</strong></div></td><td>{kpi.unit}</td><td><span className="formula-badge">{kpi.calculation_type}</span></td><td><StatusBadge status={String(kpi.active) === 'false' ? 'Tạm tắt' : 'Đang áp dụng'} /></td><td>{targets.length ? `${targets.length} người` : 'Chưa giao'}</td><td>{targets.length ? targets.map((target) => `${target.target_value || 0} ${kpi.unit}`).join(', ') : '—'}</td><td><button className="row-more">•••</button></td></tr> })}</tbody></table>{kpis.length === 0 && <EmptyState icon="target" title="Chưa có KPI" description="Admin cần tạo KPI để bắt đầu đo lường hiệu suất đội ngũ." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI đầu tiên" />}</div></div></>
+function KpiView({ kpis, kpiTargets, canManage, onAdd, onEdit, onAssign }: { kpis: Kpi[]; kpiTargets: KpiTarget[]; canManage: boolean; onAdd: () => void; onEdit: (kpi: Kpi) => void; onAssign: () => void }) {
+  return <><PageIntro eyebrow="HIỆU SUẤT" title="KPI & mục tiêu" description="Thiết lập chỉ tiêu linh hoạt cho Sales, nhóm hoặc toàn công ty." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI" actionIcon="target" /><div className="kpi-info"><div className="kpi-info-icon"><Icon name="target" size={20} /></div><div><strong>KPI được thiết kế mở rộng</strong><span>Sales chỉ xem KPI của mình; Admin có quyền tạo, sửa và giao mục tiêu.</span></div>{canManage && <button className="secondary-button" onClick={onAssign}><Icon name="users" size={15} /> Giao KPI cho Sales</button>}</div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên KPI</th><th>Đơn vị</th><th>Nguồn lấy</th><th>Cách tính</th><th>Trạng thái</th><th>Đã giao</th><th>Mục tiêu kỳ hiện tại</th><th /></tr></thead><tbody>{kpis.map((kpi) => { const targets = kpiTargets.filter((target) => target.kpi_id === kpi.kpi_id); return <tr key={kpi.kpi_id}><td><div className="kpi-name"><span className="kpi-bullet" /><strong>{kpi.kpi_name}</strong><small>{kpi.kpi_code || kpi.kpi_id}</small></div></td><td>{kpi.unit}</td><td><span className="source-badge">{kpiSourceLabel(kpi.data_source)}</span></td><td><span className="formula-badge">{kpi.calculation_type}</span></td><td><StatusBadge status={String(kpi.active) === 'false' ? 'Tạm tắt' : 'Đang áp dụng'} /></td><td>{targets.length ? `${targets.length} người` : 'Chưa giao'}</td><td>{targets.length ? targets.map((target) => `${target.target_value || 0} ${kpi.unit}`).join(', ') : '—'}</td><td>{canManage ? <button className="table-action" onClick={() => onEdit(kpi)}>Sửa</button> : '—'}</td></tr> })}</tbody></table>{kpis.length === 0 && <EmptyState icon="target" title="Chưa có KPI" description="Admin cần tạo KPI để bắt đầu đo lường hiệu suất đội ngũ." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI đầu tiên" />}</div></div></>
 }
 
 function ReportsView({ dateFrom, dateTo, salesFilter, showToast }: { dateFrom: string; dateTo: string; salesFilter: string; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
@@ -623,10 +635,21 @@ function OrderModal({ shops, onClose, onSaved, showToast }: { shops: Shop[]; onC
   return <Modal eyebrow="BÁN HÀNG" title="Tạo đơn hàng" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="field wide"><span>Quán <b>*</b></span><select autoFocus value={form.shop_id} onChange={(event) => setForm({ ...form, shop_id: event.target.value })}><option value="">Chọn quán</option>{shops.map((shop) => <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>)}</select></label><div className="form-grid"><label className="field wide"><span>Loại cafe <b>*</b></span><select value={form.product_type} onChange={(event) => setForm({ ...form, product_type: event.target.value })}><option>Flamen pha máy</option><option>Flamen pha phin</option></select></label><label className="field"><span>Số lượng (Kg) <b>*</b></span><input type="text" inputMode="decimal" minLength={1} value={form.quantity_kg} onChange={(event) => setForm({ ...form, quantity_kg: event.target.value })} placeholder="Ví dụ: 10 hoặc 10,5" /></label><label className="field"><span>Đơn giá</span><input type="text" inputMode="decimal" value={form.unit_price} onChange={(event) => setForm({ ...form, unit_price: event.target.value })} placeholder="Nhập đơn giá" /></label><label className="field wide"><span>Tổng tiền dự kiến</span><div className="amount-preview">{formatCurrency(amount)} đ</div></label><label className="field wide"><span>Ghi chú</span><textarea rows={3} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu đơn hàng'}</button></div></form></Modal>
 }
 
-function KpiModal({ onClose, onSaved, showToast }: { onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
-  const [form, setForm] = useState({ kpi_name: '', kpi_code: '', description: '', unit: 'lần', data_source: 'VISITS', calculation_type: 'COUNT', active: true }); const [saving, setSaving] = useState(false)
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!form.kpi_name) return showToast('Vui lòng nhập tên KPI', 'error'); setSaving(true); try { await apiRequest('createKpi', form); onSaved() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể tạo KPI', 'error') } finally { setSaving(false) } }
-  return <Modal eyebrow="HIỆU SUẤT" title="Tạo KPI mới" onClose={onClose}><form className="modal-form" onSubmit={submit}><div className="form-grid"><label className="field wide"><span>Tên KPI <b>*</b></span><input autoFocus value={form.kpi_name} onChange={(event) => setForm({ ...form, kpi_name: event.target.value })} placeholder="Ví dụ: Số lượt ghé quán" /></label><label className="field"><span>Mã KPI</span><input value={form.kpi_code} onChange={(event) => setForm({ ...form, kpi_code: event.target.value.toUpperCase() })} placeholder="VISIT_COUNT" /></label><label className="field"><span>Đơn vị</span><input value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="field"><span>Nguồn dữ liệu</span><select value={form.data_source} onChange={(event) => setForm({ ...form, data_source: event.target.value })}><option>VISITS</option><option>ORDERS</option><option>SHOPS</option><option>MANUAL</option></select></label><label className="field"><span>Cách tính</span><select value={form.calculation_type} onChange={(event) => setForm({ ...form, calculation_type: event.target.value })}><option>COUNT</option><option>SUM</option><option>AVG</option><option>DISTINCT_COUNT</option><option>MANUAL</option></select></label><label className="field wide"><span>Mô tả</span><textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Tạo KPI'}</button></div></form></Modal>
+function KpiModal({ kpi, onClose, onSaved, showToast }: { kpi?: Kpi; onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
+  const editing = Boolean(kpi?.kpi_id)
+  const [form, setForm] = useState(() => ({ kpi_name: kpi?.kpi_name || '', kpi_code: kpi?.kpi_code || '', description: kpi?.description || '', unit: kpi?.unit || 'lần', data_source: kpi?.data_source || 'VISITS', calculation_type: kpi?.calculation_type || 'COUNT', active: String(kpi?.active) !== 'false' }))
+  const [saving, setSaving] = useState(false)
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!form.kpi_name.trim()) return showToast('Vui lòng nhập tên KPI', 'error')
+    setSaving(true)
+    try {
+      await apiRequest(editing ? 'updateKpi' : 'createKpi', editing ? { ...form, kpi_id: kpi?.kpi_id } : form)
+      onSaved()
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể lưu KPI', 'error') }
+    finally { setSaving(false) }
+  }
+  return <Modal eyebrow="HIỆU SUẤT" title={editing ? 'Sửa KPI' : 'Tạo KPI mới'} onClose={onClose}><form className="modal-form" onSubmit={submit}><div className="form-grid"><label className="field wide"><span>Tên KPI <b>*</b></span><input autoFocus value={form.kpi_name} onChange={(event) => setForm({ ...form, kpi_name: event.target.value })} placeholder="Ví dụ: Số lượt ghé quán" /></label><label className="field"><span>Mã KPI</span><input value={form.kpi_code} onChange={(event) => setForm({ ...form, kpi_code: event.target.value.toUpperCase() })} placeholder="VISIT_COUNT" /></label><label className="field"><span>Đơn vị</span><input value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label><label className="field"><span>Nguồn lấy</span><select value={form.data_source} onChange={(event) => setForm({ ...form, data_source: event.target.value })}><option value="VISITS">Đi tuyến / Check-in</option><option value="ORDERS">Đơn hàng</option><option value="SHOPS">Danh sách quán</option><option value="KPI_RECORDS">KPI thủ công</option></select></label><label className="field"><span>Cách tính</span><select value={form.calculation_type} onChange={(event) => setForm({ ...form, calculation_type: event.target.value })}><option>COUNT</option><option>SUM</option><option>AVG</option><option>DISTINCT_COUNT</option><option>MANUAL</option></select></label><label className="field"><span>Trạng thái</span><select value={form.active ? 'true' : 'false'} onChange={(event) => setForm({ ...form, active: event.target.value === 'true' })}><option value="true">Đang áp dụng</option><option value="false">Tạm tắt</option></select></label><label className="field wide"><span>Mô tả</span><textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label></div><div className="kpi-form-help">Check-in dùng nguồn <strong>Đi tuyến / Check-in</strong>; KPI Kg bán hoặc doanh thu dùng nguồn <strong>Đơn hàng</strong>.</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : editing ? 'Lưu thay đổi' : 'Tạo KPI'}</button></div></form></Modal>
 }
 
 function KpiTargetModal({ kpis, users, onClose, onSaved, showToast }: { kpis: Kpi[]; users: User[]; onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
