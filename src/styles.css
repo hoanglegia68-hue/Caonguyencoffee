@@ -83,6 +83,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .gps-grant { color: #8a6334; border-color: #efdfc5; background: #fff9ef; }
 .gps-granted { color: #4d8b65; font-size: 10px; white-space: nowrap; }
 .photo-indicator { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #5479a8; background: #edf3fb; text-decoration: none; }
+.shop-row-error { display: inline-block; padding: 8px 0; color: #a15e4c; font-size: 10px; }
 .photo-indicator:hover { color: #2f5f99; background: #e1ebfa; }
 .photo-missing { color: #b8c1bb; }
 .gps-readonly, .checkin-rule { min-height: 38px; padding: 10px 11px; border: 1px solid #e4ebe5; border-radius: 7px; color: #5d7567; background: #f4faf5; font-size: 11px; }

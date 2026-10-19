@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
+import { Component, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { apiRequest, AuthSession, clearStoredSession, fileToCompressedDataUrl, getStoredSession, loginWithPassword } from './lib/api'
 
 type View = 'overview' | 'shops' | 'routes' | 'orders' | 'payments' | 'kpi' | 'reports'
@@ -88,6 +88,60 @@ type KpiTarget = {
 }
 
 type User = { user_id: string; username?: string; full_name: string; email?: string; role: string; phone?: string; active?: boolean | string }
+
+function safeText(value: unknown, fallback = '') {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return fallback
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const parsed = parseUserNumber(typeof value === 'string' || typeof value === 'number' ? value : '')
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function normalizeShop(value: unknown, index: number): Shop {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  return {
+    shop_id: safeText(raw.shop_id, `SHOP-ROW-${index + 1}`),
+    shop_name: safeText(raw.shop_name, 'Chưa đặt tên'),
+    address: safeText(raw.address),
+    phone: safeText(raw.phone),
+    contact_name: safeText(raw.contact_name),
+    current_supplier: safeText(raw.current_supplier),
+    notes: safeText(raw.notes),
+    latitude: raw.latitude === undefined || raw.latitude === null ? '' : safeText(raw.latitude),
+    longitude: raw.longitude === undefined || raw.longitude === null ? '' : safeText(raw.longitude),
+    salesperson_name: safeText(raw.salesperson_name),
+    salesperson_id: safeText(raw.salesperson_id),
+    revenue: safeNumber(raw.revenue),
+    avg_monthly_revenue: safeNumber(raw.avg_monthly_revenue),
+    avg_monthly_orders: safeNumber(raw.avg_monthly_orders),
+    last_order_at: safeText(raw.last_order_at),
+    last_visit_at: safeText(raw.last_visit_at),
+    status: safeText(raw.status, 'Đang hoạt động'),
+    gps_locked: raw.gps_locked === true || String(raw.gps_locked).toLowerCase() === 'true',
+    gps_edit_granted: raw.gps_edit_granted === true || String(raw.gps_edit_granted).toLowerCase() === 'true',
+    gps_edit_requested: raw.gps_edit_requested === true || String(raw.gps_edit_requested).toLowerCase() === 'true',
+    photo_file_id: safeText(raw.photo_file_id),
+    photo_url: safeText(raw.photo_url),
+    photo_thumbnail_url: safeText(raw.photo_thumbnail_url),
+    photo_direct_url: safeText(raw.photo_direct_url),
+  }
+}
+
+function normalizeUser(value: unknown, index: number): User {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  return {
+    user_id: safeText(raw.user_id, `USER-ROW-${index + 1}`),
+    username: safeText(raw.username),
+    email: safeText(raw.email),
+    full_name: safeText(raw.full_name, safeText(raw.username, 'Chưa đặt tên')),
+    role: safeText(raw.role, 'sales'),
+    phone: safeText(raw.phone),
+    active: raw.active === false || String(raw.active).toLowerCase() === 'false' ? false : true,
+  }
+}
 
 const emptyDashboard: DashboardData = {
   shopCount: 0, visitCount: 0, orderCount: 0, quantityKg: 0, revenue: 0, paid: 0, debt: 0, kpiCompletion: 0,
@@ -289,12 +343,12 @@ function App() {
         apiRequest<KpiTarget[]>('getKpiTargets', {}),
       ])
       setDashboard({ ...emptyDashboard, ...dashboardResult })
-      setShops(Array.isArray(shopsResult) ? shopsResult : [])
+      setShops(Array.isArray(shopsResult) ? shopsResult.map(normalizeShop) : [])
       setOrders(Array.isArray(ordersResult) ? ordersResult : [])
       setKpis(Array.isArray(kpisResult) ? kpisResult : [])
       setKpiProgress(Array.isArray(kpiProgressResult) ? kpiProgressResult : [])
       setKpiTargets(Array.isArray(kpiTargetsResult) ? kpiTargetsResult : [])
-      setUsers(Array.isArray(usersResult) ? usersResult : [])
+      setUsers(Array.isArray(usersResult) ? usersResult.map(normalizeUser) : [])
       setConnected(true)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Không thể tải dữ liệu'
@@ -468,9 +522,42 @@ function EmptyState({ icon, title, description, action, actionLabel }: { icon: I
   return <div className="empty-state"><div className="empty-icon"><Icon name={icon} size={24} /></div><strong>{title}</strong><span>{description}</span>{action && actionLabel && <button className="secondary-button" onClick={action}>{actionLabel}</button>}</div>
 }
 
+class ShopRowBoundary extends Component<{ children: ReactNode; shopId: string }, { hasError: boolean }> {
+  state = { hasError: false }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <tr><td colSpan={9}><span className="shop-row-error">Không thể hiển thị quán {safeText(this.props.shopId, 'này')}. Dữ liệu khác vẫn được giữ nguyên.</span></td></tr>
+    }
+    return this.props.children
+  }
+}
+
 function KpiProgressList({ items }: { items: KpiProgress[] }) {
   if (!items.length) return <EmptyState icon="target" title="Chưa có KPI khai báo" description="Admin hãy tạo KPI trong Menu KPI & mục tiêu." />
   return <div className="kpi-progress-list">{items.map((item) => { const targetNote = item.target_status === 'OUTSIDE_PERIOD' ? ' · Đang hiển thị theo kỳ KPI' : item.target_count ? ` · ${item.target_count} mục tiêu` : ' · Chưa giao mục tiêu'; return <div className="kpi-progress-row" key={item.kpi_id}><div className="kpi-progress-copy"><strong>{item.kpi_name}</strong><span>{item.actual_value || 0} / {item.target_value || 0} {item.unit || ''}{targetNote}</span></div><div className="kpi-progress-track"><span style={{ width: `${Math.min(100, Number(item.progress || 0))}%` }} /></div><strong className="kpi-progress-value">{Number(item.progress || 0)}%</strong></div> })}</div>
+}
+
+function ShopTableRow({ shop, salesUsers, isAdmin, onEdit, onGrantGps, onRequestGps }: { shop: Shop; salesUsers: User[]; isAdmin: boolean; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onRequestGps: (shop: Shop) => void }) {
+  const mapUrl = shopMapUrl(shop)
+  const thumbnailUrl = shopThumbnailUrl(shop)
+  const photoUrl = safeText(shop.photo_direct_url) || safeText(shop.photo_url) || thumbnailUrl
+  const gpsLocked = String(shop.gps_locked) === 'true'
+  const gpsGranted = String(shop.gps_edit_granted) === 'true'
+  const gpsRequested = String(shop.gps_edit_requested) === 'true'
+  const shopName = safeText(shop.shop_name, 'Chưa đặt tên')
+  const salespersonName = safeText(shop.salesperson_name) || salesUsers.find((user) => user.user_id === shop.salesperson_id)?.full_name || 'Chưa phân công'
+  return <tr>
+    <td><div className="shop-cell"><div className="shop-avatar">{shopName.slice(0, 1).toUpperCase() || 'Q'}</div><div><strong>{shopName}</strong><small>{safeText(shop.status, 'Đang hoạt động')}{gpsLocked ? ' · GPS đã khóa' : ' · Chưa có GPS'}</small></div></div></td>
+    <td><div className="address-cell">{safeText(shop.address, 'Chưa cập nhật')}{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer"><Icon name="map" size={13} /> Mở bản đồ</a>}</div></td>
+    <td>{thumbnailUrl ? <a className="photo-preview" href={photoUrl} target="_blank" rel="noreferrer" title="Mở ảnh quán"><img className="photo-thumb" src={thumbnailUrl} alt={`Ảnh ${shopName}`} loading="lazy" onError={(event) => { event.currentTarget.classList.add('photo-thumb-error') }} /><span>Xem ảnh</span></a> : <span className="photo-missing">Chưa có</span>}</td>
+    <td>{salespersonName}</td><td>{formatCurrency(shop.revenue)} đ</td><td>{safeNumber(shop.avg_monthly_orders)} </td><td>{formatDate(safeText(shop.last_order_at))}</td><td>{formatDate(safeText(shop.last_visit_at))}</td>
+    <td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && gpsLocked && !gpsGranted && gpsRequested && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Phê duyệt GPS</button>}{isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <span className="gps-not-requested">Chưa xin</span>}{!isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <button className="table-action gps-request" onClick={() => onRequestGps(shop)}>Xin sửa GPS</button>}{!isAdmin && gpsRequested && <span className="gps-requested">Đã gửi yêu cầu</span>}{gpsGranted && <span className="gps-granted">Đã cấp</span>}</td>
+  </tr>
 }
 
 function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRequestGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onRequestGps: (shop: Shop) => void; onVisit: () => void }) {
@@ -489,21 +576,7 @@ function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRe
   return <>
     <PageIntro eyebrow="KHÁCH HÀNG" title="Danh sách quán" description="Hồ sơ quán, GPS cố định, ảnh nhận diện và giá trị kinh doanh theo từng điểm bán." action={onAdd} actionLabel="Thêm quán" />
     <div className="table-toolbar"><div className="search-field"><Icon name="search" size={17} /><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Tìm theo tên quán, địa chỉ..." /><span>{filteredShops.length} kết quả</span></div><button className="secondary-button" onClick={onVisit}><Icon name="route" size={16} /> Ghi nhận check-in</button></div>
-    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh quán</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{visibleShops.map((shop) => {
-      const mapUrl = shopMapUrl(shop)
-      const thumbnailUrl = shopThumbnailUrl(shop)
-      const photoUrl = shop.photo_direct_url || shop.photo_url || thumbnailUrl
-      const gpsLocked = String(shop.gps_locked) === 'true'
-      const gpsGranted = String(shop.gps_edit_granted) === 'true'
-      const gpsRequested = String(shop.gps_edit_requested) === 'true'
-      return <tr key={shop.shop_id}>
-        <td><div className="shop-cell"><div className="shop-avatar">{shop.shop_name?.slice(0, 1).toUpperCase() || 'Q'}</div><div><strong>{shop.shop_name || 'Chưa đặt tên'}</strong><small>{shop.status || 'Đang hoạt động'}{String(shop.gps_locked) === 'true' ? ' · GPS đã khóa' : ' · Chưa có GPS'}</small></div></div></td>
-        <td><div className="address-cell">{shop.address || 'Chưa cập nhật'}{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer"><Icon name="map" size={13} /> Mở bản đồ</a>}</div></td>
-        <td>{thumbnailUrl ? <a className="photo-preview" href={photoUrl} target="_blank" rel="noreferrer" title="Mở ảnh quán"><img className="photo-thumb" src={thumbnailUrl} alt={`Ảnh ${shop.shop_name || 'quán'}`} loading="lazy" onError={(event) => { event.currentTarget.classList.add('photo-thumb-error') }} /><span>Xem ảnh</span></a> : <span className="photo-missing">Chưa có</span>}</td>
-        <td>{shop.salesperson_name || salesUsers.find((user) => user.user_id === shop.salesperson_id)?.full_name || 'Chưa phân công'}</td><td>{formatCurrency(shop.revenue)} đ</td><td>{shop.avg_monthly_orders || 0}</td><td>{formatDate(shop.last_order_at)}</td><td>{formatDate(shop.last_visit_at)}</td>
-        <td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && gpsLocked && !gpsGranted && gpsRequested && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Phê duyệt GPS</button>}{isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <span className="gps-not-requested">Chưa xin</span>}{!isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <button className="table-action gps-request" onClick={() => onRequestGps(shop)}>Xin sửa GPS</button>}{!isAdmin && gpsRequested && <span className="gps-requested">Đã gửi yêu cầu</span>}{gpsGranted && <span className="gps-granted">Đã cấp</span>}</td>
-      </tr>
-    })}</tbody></table>{filteredShops.length === 0 && <EmptyState icon="store" title={shops.length === 0 ? 'Chưa có hồ sơ quán' : 'Không tìm thấy quán'} description={shops.length === 0 ? 'Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng.' : 'Thử tìm theo tên quán hoặc địa chỉ khác.'} action={shops.length === 0 ? onAdd : undefined} actionLabel="Thêm quán đầu tiên" />}</div></div>
+    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh quán</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{visibleShops.map((shop) => <ShopRowBoundary key={shop.shop_id} shopId={shop.shop_id}><ShopTableRow shop={shop} salesUsers={salesUsers} isAdmin={isAdmin} onEdit={onEdit} onGrantGps={onGrantGps} onRequestGps={onRequestGps} /></ShopRowBoundary>)}</tbody></table>{filteredShops.length === 0 && <EmptyState icon="store" title={shops.length === 0 ? 'Chưa có hồ sơ quán' : 'Không tìm thấy quán'} description={shops.length === 0 ? 'Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng.' : 'Thử tìm theo tên quán hoặc địa chỉ khác.'} action={shops.length === 0 ? onAdd : undefined} actionLabel="Thêm quán đầu tiên" />}</div></div>
     <Pagination page={currentPage} pageSize={pageSize} total={filteredShops.length} onChange={setPage} />
   </>
 }
