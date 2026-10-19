@@ -437,6 +437,15 @@ function FilterBar({ dateFrom, dateTo, salesFilter, salesUsers, canFilterSales, 
   return <div className="filter-bar"><div className="filter-label"><Icon name="calendar" size={16} /> Kỳ báo cáo</div><input aria-label="Từ ngày" type="date" value={dateFrom} onChange={(event) => onDateFrom(event.target.value)} /><span className="date-separator">đến</span><input aria-label="Đến ngày" type="date" value={dateTo} onChange={(event) => onDateTo(event.target.value)} />{canFilterSales && <><div className="filter-spacer" /><label className="select-with-icon"><Icon name="users" size={16} /><select value={salesFilter} onChange={(event) => onSales(event.target.value)}><option value="all">Tất cả Sales</option>{salesUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name}</option>)}</select><Icon name="chevron" size={14} /></label></>}</div>
 }
 
+function Pagination({ page, pageSize, total, onChange }: { page: number; pageSize: number; total: number; onChange: (page: number) => void }) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  if (pageCount <= 1) return null
+  const currentPage = Math.min(page, pageCount)
+  const first = total ? (currentPage - 1) * pageSize + 1 : 0
+  const last = Math.min(currentPage * pageSize, total)
+  return <div className="pagination"><span>Hiển thị {first}–{last} / {total}</span><div><button className="pagination-button" disabled={currentPage <= 1} onClick={() => onChange(currentPage - 1)} aria-label="Trang trước">‹</button><strong>Trang {currentPage} / {pageCount}</strong><button className="pagination-button" disabled={currentPage >= pageCount} onClick={() => onChange(currentPage + 1)} aria-label="Trang sau">›</button></div></div>
+}
+
 function Overview({ dashboard, kpiProgress, dateFrom, dateTo, salesFilter, salesUsers, canFilterSales, onDateFrom, onDateTo, onSales, onOpenRoute, onOpenOrder }: { dashboard: DashboardData; kpiProgress: KpiProgress[]; dateFrom: string; dateTo: string; salesFilter: string; salesUsers: User[]; canFilterSales: boolean; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onOpenRoute: () => void; onOpenOrder: () => void }) {
   const cards = [
     { label: 'Tổng doanh thu', value: `${formatCurrency(dashboard.revenue)} đ`, meta: 'Trong kỳ đã chọn', icon: 'trend' as IconName, tone: 'green' },
@@ -465,10 +474,22 @@ function KpiProgressList({ items }: { items: KpiProgress[] }) {
 }
 
 function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRequestGps, onVisit }: { shops: Shop[]; salesUsers: User[]; isAdmin: boolean; onAdd: () => void; onEdit: (shop: Shop) => void; onGrantGps: (shop: Shop) => void; onRequestGps: (shop: Shop) => void; onVisit: () => void }) {
+  const [searchTerm, setSearchTerm] = useState('')
+  const [page, setPage] = useState(1)
+  const pageSize = 10
+  const filteredShops = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase()
+    if (!query) return shops
+    return shops.filter((shop) => `${shop.shop_name || ''} ${shop.address || ''}`.toLowerCase().includes(query))
+  }, [shops, searchTerm])
+  const pageCount = Math.max(1, Math.ceil(filteredShops.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleShops = filteredShops.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  useEffect(() => setPage(1), [searchTerm])
   return <>
     <PageIntro eyebrow="KHÁCH HÀNG" title="Danh sách quán" description="Hồ sơ quán, GPS cố định, ảnh nhận diện và giá trị kinh doanh theo từng điểm bán." action={onAdd} actionLabel="Thêm quán" />
-    <div className="table-toolbar"><div className="search-field"><Icon name="search" size={17} /><input placeholder="Tìm theo tên quán, địa chỉ..." /><span>{shops.length} kết quả</span></div><button className="secondary-button" onClick={onVisit}><Icon name="route" size={16} /> Ghi nhận check-in</button></div>
-    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh quán</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{shops.map((shop) => {
+    <div className="table-toolbar"><div className="search-field"><Icon name="search" size={17} /><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Tìm theo tên quán, địa chỉ..." /><span>{filteredShops.length} kết quả</span></div><button className="secondary-button" onClick={onVisit}><Icon name="route" size={16} /> Ghi nhận check-in</button></div>
+    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên quán</th><th>Địa chỉ / tọa độ</th><th>Ảnh quán</th><th>Salesperson</th><th>Doanh thu kỳ lọc</th><th>Đơn TB/tháng</th><th>Đặt hàng gần nhất</th><th>Visit gần nhất</th><th /></tr></thead><tbody>{visibleShops.map((shop) => {
       const mapUrl = shopMapUrl(shop)
       const thumbnailUrl = shopThumbnailUrl(shop)
       const photoUrl = shop.photo_direct_url || shop.photo_url || thumbnailUrl
@@ -482,7 +503,8 @@ function ShopsView({ shops, salesUsers, isAdmin, onAdd, onEdit, onGrantGps, onRe
         <td>{shop.salesperson_name || salesUsers.find((user) => user.user_id === shop.salesperson_id)?.full_name || 'Chưa phân công'}</td><td>{formatCurrency(shop.revenue)} đ</td><td>{shop.avg_monthly_orders || 0}</td><td>{formatDate(shop.last_order_at)}</td><td>{formatDate(shop.last_visit_at)}</td>
         <td className="shop-actions"><button className="table-action" onClick={() => onEdit(shop)}>Sửa</button>{isAdmin && gpsLocked && !gpsGranted && gpsRequested && <button className="table-action gps-grant" onClick={() => onGrantGps(shop)}>Phê duyệt GPS</button>}{isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <span className="gps-not-requested">Chưa xin</span>}{!isAdmin && gpsLocked && !gpsGranted && !gpsRequested && <button className="table-action gps-request" onClick={() => onRequestGps(shop)}>Xin sửa GPS</button>}{!isAdmin && gpsRequested && <span className="gps-requested">Đã gửi yêu cầu</span>}{gpsGranted && <span className="gps-granted">Đã cấp</span>}</td>
       </tr>
-    })}</tbody></table>{shops.length === 0 && <EmptyState icon="store" title="Chưa có hồ sơ quán" description="Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng." action={onAdd} actionLabel="Thêm quán đầu tiên" />}</div></div>
+    })}</tbody></table>{filteredShops.length === 0 && <EmptyState icon="store" title={shops.length === 0 ? 'Chưa có hồ sơ quán' : 'Không tìm thấy quán'} description={shops.length === 0 ? 'Hãy tạo quán đầu tiên để bắt đầu quản lý tuyến bán hàng.' : 'Thử tìm theo tên quán hoặc địa chỉ khác.'} action={shops.length === 0 ? onAdd : undefined} actionLabel="Thêm quán đầu tiên" />}</div></div>
+    <Pagination page={currentPage} pageSize={pageSize} total={filteredShops.length} onChange={setPage} />
   </>
 }
 
@@ -554,16 +576,29 @@ function RoutesView({ shops, salesUsers, currentUser, isAdmin, onSaved, showToas
 }
 
 function OrdersView({ orders, shops, canCreate, onAdd }: { orders: Order[]; shops: Shop[]; canCreate: boolean; onAdd: () => void }) {
+  const [page, setPage] = useState(1)
+  const pageSize = 10
+  const pageCount = Math.max(1, Math.ceil(orders.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleOrders = orders.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  useEffect(() => setPage(1), [orders])
   const totalSold = orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0)
   return <>
     <PageIntro eyebrow="BÁN HÀNG" title="Đơn hàng" description="Theo dõi sản lượng Flamen theo từng quán và nhân viên Sales." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng" actionIcon="cart" />
     <div className="summary-strip order-summary"><div><span>Tổng đơn trong kỳ</span><strong>{orders.length}</strong></div><div><span>Tổng sản lượng</span><strong>{orders.reduce((sum, order) => sum + Number(order.quantity_kg || 0), 0)} kg</strong></div><div><span>Tổng tiền đã bán</span><strong>{formatCurrency(totalSold)} đ</strong></div><div><span>Đã thanh toán</span><strong>{formatCurrency(orders.filter((order) => order.payment_status === 'Đã thanh toán').reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div><div><span>Chờ thanh toán</span><strong>{orders.filter((order) => order.payment_status !== 'Đã thanh toán').length}</strong></div></div>
-    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales bán</th><th>Sản phẩm</th><th>Số lượng</th><th>Thành tiền</th><th>Ngày đặt</th><th>Thanh toán</th></tr></thead><tbody>{orders.map((order) => <tr key={order.order_id}><td><span className="mono">{order.order_id}</span></td><td>{order.shop_name || shops.find((shop) => shop.shop_id === order.shop_id)?.shop_name || '—'}</td><td>{order.salesperson_name || '—'}</td><td>{order.product_type}</td><td><strong>{order.quantity_kg} kg</strong></td><td>{formatCurrency(order.total_amount)} đ</td><td>{formatDate(order.order_date)}</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td></tr>)}</tbody></table>{orders.length === 0 && <EmptyState icon="cart" title="Chưa có đơn hàng" description="Các đơn hàng do Sales ghi nhận sẽ hiển thị tại đây." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng đầu tiên" />}</div></div>
+    <div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales bán</th><th>Sản phẩm</th><th>Số lượng</th><th>Thành tiền</th><th>Ngày đặt</th><th>Thanh toán</th></tr></thead><tbody>{visibleOrders.map((order) => <tr key={order.order_id}><td><span className="mono">{order.order_id}</span></td><td>{order.shop_name || shops.find((shop) => shop.shop_id === order.shop_id)?.shop_name || '—'}</td><td>{order.salesperson_name || '—'}</td><td>{order.product_type}</td><td><strong>{order.quantity_kg} kg</strong></td><td>{formatCurrency(order.total_amount)} đ</td><td>{formatDate(order.order_date)}</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td></tr>)}</tbody></table>{orders.length === 0 && <EmptyState icon="cart" title="Chưa có đơn hàng" description="Các đơn hàng do Sales ghi nhận sẽ hiển thị tại đây." action={canCreate ? onAdd : undefined} actionLabel="Tạo đơn hàng đầu tiên" />}</div></div>
+    <Pagination page={currentPage} pageSize={pageSize} total={orders.length} onChange={setPage} />
   </>
 }
 
 function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDateFrom, onDateTo, onSales, onConfirm }: { orders: Order[]; salesUsers: User[]; dateFrom: string; dateTo: string; salesFilter: string; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onConfirm: (order: Order) => void }) {
+  const [page, setPage] = useState(1)
+  const pageSize = 10
   const unpaid = orders.filter((order) => order.payment_status !== 'Đã thanh toán')
+  const pageCount = Math.max(1, Math.ceil(unpaid.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleUnpaid = unpaid.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  useEffect(() => setPage(1), [orders])
   const salesStats = Object.values(orders.reduce<Record<string, { name: string; orderCount: number; paid: number; unpaid: number }>>((result, order) => {
     const key = order.salesperson_id || order.salesperson_name || 'unassigned'
     const stat = result[key] || { name: order.salesperson_name || order.salesperson_id || 'Chưa xác định', orderCount: 0, paid: 0, unpaid: 0 }
@@ -578,12 +613,19 @@ function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDat
     <FilterBar dateFrom={dateFrom} dateTo={dateTo} salesFilter={salesFilter} salesUsers={salesUsers} canFilterSales onDateFrom={onDateFrom} onDateTo={onDateTo} onSales={onSales} />
     <div className="summary-strip payment-summary"><div><span>Đơn chờ xác nhận</span><strong>{unpaid.length}</strong></div><div><span>Giá trị chờ thu</span><strong>{formatCurrency(unpaid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div><div><span>Đã thu trong kỳ</span><strong>{formatCurrency(orders.filter((order) => order.payment_status === 'Đã thanh toán').reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div></div>
     <div className="panel payment-sales-panel"><div className="panel-heading"><div><h3>Thống kê theo Sales</h3><span>Đã thu và còn chờ thu trong kỳ đã chọn</span></div></div>{salesStats.length === 0 ? <EmptyState icon="users" title="Chưa có dữ liệu thanh toán" description="Thay đổi thời gian hoặc Sales để xem thống kê." /> : <div className="table-wrap"><table><thead><tr><th>Sales</th><th>Số đơn</th><th>Đã thanh toán</th><th>Chờ thanh toán</th></tr></thead><tbody>{salesStats.map((stat) => <tr key={stat.name}><td><strong>{stat.name}</strong></td><td>{stat.orderCount}</td><td>{formatCurrency(stat.paid)} đ</td><td>{formatCurrency(stat.unpaid)} đ</td></tr>)}</tbody></table></div>}</div>
-    <div className="panel"><div className="panel-heading"><div><h3>Danh sách cần xử lý</h3><span>Cập nhật trạng thái thanh toán sau khi đối soát</span></div></div>{unpaid.length === 0 ? <EmptyState icon="wallet" title="Chưa có khoản cần xác nhận" description="Khi có đơn hàng chưa thanh toán, Kế toán sẽ xử lý tại đây." /> : <div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales</th><th>Ngày đặt</th><th>Số tiền</th><th>Trạng thái</th><th /></tr></thead><tbody>{unpaid.map((order) => <tr key={order.order_id}><td className="mono">{order.order_id}</td><td>{order.shop_name || order.shop_id}</td><td>{order.salesperson_name || order.salesperson_id || '—'}</td><td>{formatDate(order.order_date)}</td><td>{formatCurrency(order.total_amount)} đ</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td><td><button className="table-action" onClick={() => onConfirm(order)}><Icon name="check" size={15} /> Xác nhận</button></td></tr>)}</tbody></table></div>}</div>
+    <div className="panel"><div className="panel-heading"><div><h3>Danh sách cần xử lý</h3><span>Cập nhật trạng thái thanh toán sau khi đối soát</span></div></div>{unpaid.length === 0 ? <EmptyState icon="wallet" title="Chưa có khoản cần xác nhận" description="Khi có đơn hàng chưa thanh toán, Kế toán sẽ xử lý tại đây." /> : <div className="table-wrap"><table><thead><tr><th>Mã đơn</th><th>Quán</th><th>Sales</th><th>Ngày đặt</th><th>Số tiền</th><th>Trạng thái</th><th /></tr></thead><tbody>{visibleUnpaid.map((order) => <tr key={order.order_id}><td className="mono">{order.order_id}</td><td>{order.shop_name || order.shop_id}</td><td>{order.salesperson_name || order.salesperson_id || '—'}</td><td>{formatDate(order.order_date)}</td><td>{formatCurrency(order.total_amount)} đ</td><td><StatusBadge status={order.payment_status || 'Chờ xác nhận'} /></td><td><button className="table-action" onClick={() => onConfirm(order)}><Icon name="check" size={15} /> Xác nhận</button></td></tr>)}</tbody></table></div>}</div>
+    <Pagination page={currentPage} pageSize={pageSize} total={unpaid.length} onChange={setPage} />
   </>
 }
 
 function KpiView({ kpis, kpiTargets, canManage, onAdd, onEdit, onAssign }: { kpis: Kpi[]; kpiTargets: KpiTarget[]; canManage: boolean; onAdd: () => void; onEdit: (kpi: Kpi) => void; onAssign: () => void }) {
-  return <><PageIntro eyebrow="HIỆU SUẤT" title="KPI & mục tiêu" description="Thiết lập chỉ tiêu linh hoạt cho Sales, nhóm hoặc toàn công ty." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI" actionIcon="target" /><div className="kpi-info"><div className="kpi-info-icon"><Icon name="target" size={20} /></div><div><strong>KPI được thiết kế mở rộng</strong><span>Sales chỉ xem KPI của mình; Admin có quyền tạo, sửa và giao mục tiêu theo từng kỳ.</span></div>{canManage && <button className="secondary-button" onClick={onAssign}><Icon name="users" size={15} /> Giao KPI cho Sales</button>}</div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên KPI</th><th>Đơn vị</th><th>Nguồn lấy</th><th>Cách tính</th><th>Thời gian thực hiện</th><th>Trạng thái</th><th>Đã giao</th><th>Mục tiêu</th><th /></tr></thead><tbody>{kpis.map((kpi) => { const targets = kpiTargets.filter((target) => target.kpi_id === kpi.kpi_id); return <tr key={kpi.kpi_id}><td><div className="kpi-name"><span className="kpi-bullet" /><strong>{kpi.kpi_name}</strong><small>{kpi.kpi_code || kpi.kpi_id}</small></div></td><td>{kpi.unit}</td><td><span className="source-badge">{kpiSourceLabel(kpi.data_source)}</span></td><td><span className="formula-badge">{kpi.calculation_type}</span></td><td>{targets.length ? <div className="kpi-period-list">{targets.map((target) => <span key={target.target_id}>{kpiPeriodLabel(target)}</span>)}</div> : '—'}</td><td><StatusBadge status={String(kpi.active) === 'false' ? 'Tạm tắt' : 'Đang áp dụng'} /></td><td>{targets.length ? `${targets.length} người` : 'Chưa giao'}</td><td>{targets.length ? <div className="kpi-period-list">{targets.map((target) => <span key={target.target_id}>{target.target_value || 0} {kpi.unit}</span>)}</div> : '—'}</td><td>{canManage ? <button className="table-action" onClick={() => onEdit(kpi)}>Sửa</button> : '—'}</td></tr> })}</tbody></table>{kpis.length === 0 && <EmptyState icon="target" title="Chưa có KPI" description="Admin cần tạo KPI để bắt đầu đo lường hiệu suất đội ngũ." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI đầu tiên" />}</div></div></>
+  const [page, setPage] = useState(1)
+  const pageSize = 10
+  const pageCount = Math.max(1, Math.ceil(kpis.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleKpis = kpis.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  useEffect(() => setPage(1), [kpis])
+  return <><PageIntro eyebrow="HIỆU SUẤT" title="KPI & mục tiêu" description="Thiết lập chỉ tiêu linh hoạt cho Sales, nhóm hoặc toàn công ty." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI" actionIcon="target" /><div className="kpi-info"><div className="kpi-info-icon"><Icon name="target" size={20} /></div><div><strong>KPI được thiết kế mở rộng</strong><span>Sales chỉ xem KPI của mình; Admin có quyền tạo, sửa và giao mục tiêu theo từng kỳ.</span></div>{canManage && <button className="secondary-button" onClick={onAssign}><Icon name="users" size={15} /> Giao KPI cho Sales</button>}</div><div className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Tên KPI</th><th>Đơn vị</th><th>Nguồn lấy</th><th>Cách tính</th><th>Thời gian thực hiện</th><th>Trạng thái</th><th>Đã giao</th><th>Mục tiêu</th><th /></tr></thead><tbody>{visibleKpis.map((kpi) => { const targets = kpiTargets.filter((target) => target.kpi_id === kpi.kpi_id); return <tr key={kpi.kpi_id}><td><div className="kpi-name"><span className="kpi-bullet" /><strong>{kpi.kpi_name}</strong><small>{kpi.kpi_code || kpi.kpi_id}</small></div></td><td>{kpi.unit}</td><td><span className="source-badge">{kpiSourceLabel(kpi.data_source)}</span></td><td><span className="formula-badge">{kpi.calculation_type}</span></td><td>{targets.length ? <div className="kpi-period-list">{targets.map((target) => <span key={target.target_id}>{kpiPeriodLabel(target)}</span>)}</div> : '—'}</td><td><StatusBadge status={String(kpi.active) === 'false' ? 'Tạm tắt' : 'Đang áp dụng'} /></td><td>{targets.length ? `${targets.length} người` : 'Chưa giao'}</td><td>{targets.length ? <div className="kpi-period-list">{targets.map((target) => <span key={target.target_id}>{target.target_value || 0} {kpi.unit}</span>)}</div> : '—'}</td><td>{canManage ? <button className="table-action" onClick={() => onEdit(kpi)}>Sửa</button> : '—'}</td></tr> })}</tbody></table>{kpis.length === 0 && <EmptyState icon="target" title="Chưa có KPI" description="Admin cần tạo KPI để bắt đầu đo lường hiệu suất đội ngũ." action={canManage ? onAdd : undefined} actionLabel="Tạo KPI đầu tiên" />}</div></div><Pagination page={currentPage} pageSize={pageSize} total={kpis.length} onChange={setPage} /></>
 }
 
 function ReportsView({ dateFrom, dateTo, salesFilter, showToast }: { dateFrom: string; dateTo: string; salesFilter: string; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {

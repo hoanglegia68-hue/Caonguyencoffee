@@ -219,7 +219,6 @@ function getShops_(payload) {
   const ordersByShop = groupBy_(orders, 'shop_id');
   const visitsByShop = groupBy_(visits, 'shop_id');
   return shops.map(function(shop) {
-    if (shop.photo_file_id) ensurePhotoPreviewAccess_(shop.photo_file_id);
     const normalizedShop = Object.assign({}, shop);
     const latitude = parseCoordinate_(shop.latitude);
     const longitude = parseCoordinate_(shop.longitude);
@@ -408,15 +407,6 @@ function getOrCreateShopFolder_(shopId, shopName) {
 
 function driveThumbnailUrl_(fileId) { return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(String(fileId)) + '&sz=w240'; }
 function driveViewUrl_(fileId) { return 'https://drive.google.com/uc?export=view&id=' + encodeURIComponent(String(fileId)); }
-function ensurePhotoPreviewAccess_(fileId) {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'PHOTO_PUBLIC_' + String(fileId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 80);
-  if (cache.get(cacheKey) === '1') return;
-  try {
-    DriveApp.getFileById(fileId).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    cache.put(cacheKey, '1', 21600);
-  } catch (_) {}
-}
 
 function getOrders_(payload) {
   const orders = filterRows_(getRows_('ORDERS'), payload);
