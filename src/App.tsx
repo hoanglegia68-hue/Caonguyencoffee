@@ -456,7 +456,7 @@ function App() {
           {activeView === 'shops' && <ShopsView shops={shops} salesUsers={salesUsers} isAdmin={isAdmin} onAdd={() => { setEditingShop(null); setModal('shop') }} onEdit={(shop) => { setEditingShop(shop); setModal('shop') }} onGrantGps={grantGpsEdit} onRequestGps={requestGpsEdit} onVisit={() => setModal('visit')} />}
           {activeView === 'routes' && <RoutesView shops={shops} salesUsers={salesUsers} currentUser={currentUser} isAdmin={isAdmin} onSaved={() => { setModal(null); void loadData() }} showToast={showToast} />}
           {activeView === 'orders' && <OrdersView orders={orders} shops={shops} canCreate={isAdmin || isSales} onAdd={() => setModal('order')} />}
-          {activeView === 'payments' && <PaymentsView orders={orders} salesUsers={paymentSalesUsers} dateFrom={paymentDateFrom} dateTo={paymentDateTo} salesFilter={paymentSalesFilter} onDateFrom={setPaymentDateFrom} onDateTo={setPaymentDateTo} onSales={setPaymentSalesFilter} onConfirm={async (order) => { try { await apiRequest('confirmPayment', { order_id: order.order_id, amount: order.total_amount, payment_method: 'Chuyển khoản' }); showToast('Đã xác nhận thanh toán'); void loadData() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xác nhận thanh toán', 'error') } }} />}
+          {activeView === 'payments' && <PaymentsView orders={orders} salesUsers={paymentSalesUsers} dateFrom={paymentDateFrom} dateTo={paymentDateTo} salesFilter={paymentSalesFilter} onDateFrom={setPaymentDateFrom} onDateTo={setPaymentDateTo} onSales={setPaymentSalesFilter} onConfirm={async (order) => { try { await apiRequest('confirmPayment', { order_id: order.order_id, amount: order.total_amount, payment_method: 'Chuyển khoản' }); showToast('Đã xác nhận thanh toán'); void loadData() } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xác nhận thanh toán', 'error') } }} showToast={showToast} />}
           {activeView === 'kpi' && <KpiView kpis={kpis} kpiTargets={kpiTargets} canManage={isAdmin} onAdd={() => { setEditingKpi(null); setModal('kpi') }} onEdit={(kpi) => { setEditingKpi(kpi); setModal('kpi-edit') }} onAssign={() => setModal('kpi-target')} />}
           {activeView === 'reports' && <ReportsView dateFrom={dateFrom} dateTo={dateTo} salesFilter={isAdmin ? salesFilter : 'all'} showToast={showToast} />}
         </div>
@@ -669,8 +669,9 @@ function OrdersView({ orders, shops, canCreate, onAdd }: { orders: Order[]; shop
   </>
 }
 
-function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDateFrom, onDateTo, onSales, onConfirm }: { orders: Order[]; salesUsers: User[]; dateFrom: string; dateTo: string; salesFilter: string; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onConfirm: (order: Order) => void }) {
+function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDateFrom, onDateTo, onSales, onConfirm, showToast }: { orders: Order[]; salesUsers: User[]; dateFrom: string; dateTo: string; salesFilter: string; onDateFrom: (value: string) => void; onDateTo: (value: string) => void; onSales: (value: string) => void; onConfirm: (order: Order) => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
   const [page, setPage] = useState(1)
+  const [exportingDebt, setExportingDebt] = useState(false)
   const pageSize = 10
   const unpaid = orders.filter((order) => order.payment_status !== 'Đã thanh toán')
   const pageCount = Math.max(1, Math.ceil(unpaid.length / pageSize))
@@ -686,8 +687,17 @@ function PaymentsView({ orders, salesUsers, dateFrom, dateTo, salesFilter, onDat
     result[key] = stat
     return result
   }, {}))
+  const exportDebt = async () => {
+    setExportingDebt(true)
+    try {
+      const result = await apiRequest<{ fileName?: string; mimeType?: string; base64?: string }>('exportReportXlsx', { reportType: 'debt', dateFrom, dateTo, salespersonId: salesFilter === 'all' ? '' : salesFilter })
+      if (!result?.base64) throw new Error('Không nhận được dữ liệu XLSX.')
+      downloadBase64File(result.base64, result.fileName || 'Bao_cao_cong_no.xlsx', result.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      showToast('Đã tải báo cáo công nợ XLSX về máy')
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xuất báo cáo công nợ', 'error') } finally { setExportingDebt(false) }
+  }
   return <>
-    <PageIntro eyebrow="TÀI CHÍNH" title="Xác nhận thanh toán" description="Kế toán xác nhận tiền về và cập nhật công nợ theo từng đơn hàng." />
+    <PageIntro eyebrow="TÀI CHÍNH" title="Xác nhận thanh toán" description="Kế toán xác nhận tiền về và cập nhật công nợ theo từng đơn hàng." action={exportingDebt ? undefined : exportDebt} actionLabel={exportingDebt ? 'Đang tạo...' : 'Xuất công nợ XLSX'} actionIcon="download" />
     <FilterBar dateFrom={dateFrom} dateTo={dateTo} salesFilter={salesFilter} salesUsers={salesUsers} canFilterSales onDateFrom={onDateFrom} onDateTo={onDateTo} onSales={onSales} />
     <div className="summary-strip payment-summary"><div><span>Đơn chờ xác nhận</span><strong>{unpaid.length}</strong></div><div><span>Giá trị chờ thu</span><strong>{formatCurrency(unpaid.reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div><div><span>Đã thu trong kỳ</span><strong>{formatCurrency(orders.filter((order) => order.payment_status === 'Đã thanh toán').reduce((sum, order) => sum + Number(order.total_amount || 0), 0))} đ</strong></div></div>
     <div className="panel payment-sales-panel"><div className="panel-heading"><div><h3>Thống kê theo Sales</h3><span>Đã thu và còn chờ thu trong kỳ đã chọn</span></div></div>{salesStats.length === 0 ? <EmptyState icon="users" title="Chưa có dữ liệu thanh toán" description="Thay đổi thời gian hoặc Sales để xem thống kê." /> : <div className="table-wrap"><table><thead><tr><th>Sales</th><th>Số đơn</th><th>Đã thanh toán</th><th>Chờ thanh toán</th></tr></thead><tbody>{salesStats.map((stat) => <tr key={stat.name}><td><strong>{stat.name}</strong></td><td>{stat.orderCount}</td><td>{formatCurrency(stat.paid)} đ</td><td>{formatCurrency(stat.unpaid)} đ</td></tr>)}</tbody></table></div>}</div>

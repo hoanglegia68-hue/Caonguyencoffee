@@ -84,7 +84,7 @@ function route_(action, payload, user) {
     case 'updateKpiTarget': return updateRow_('KPI_TARGETS', payload, 'target_id');
     case 'getDashboard': return getDashboard_(payload);
     case 'getReports': return getReports_(payload);
-    case 'exportReportXlsx': return exportReportXlsx_(payload);
+    case 'exportReportXlsx': return exportReportXlsx_(payload, user);
     default: throw new Error('Action không được hỗ trợ: ' + action);
   }
 }
@@ -98,7 +98,7 @@ function authorize_(action, payload) {
   const permissions = {
     getConfig: ['admin'], getDashboard: ['admin', 'sales'], getShops: ['admin', 'sales'], getShopDetail: ['admin', 'sales'],
     getOrders: ['admin', 'sales', 'accountant', 'kế toán'], getKpis: ['admin', 'sales'], getKpiProgress: ['admin', 'sales'],
-    getKpiTargets: ['admin', 'sales'], getReports: ['admin', 'sales'], exportReportXlsx: ['admin', 'sales'],
+    getKpiTargets: ['admin', 'sales'], getReports: ['admin', 'sales'], exportReportXlsx: ['admin', 'sales', 'accountant', 'kế toán'],
     getUsers: ['admin', 'sales'], createShop: ['admin', 'sales'], updateShop: ['admin', 'sales'],
     requestGpsEdit: ['sales'], grantGpsEdit: ['admin'], uploadShopPhoto: ['admin', 'sales'], checkIn: ['admin', 'sales'],
     createVisit: ['admin', 'sales'], uploadVisitPhoto: ['admin', 'sales'], createOrder: ['admin', 'sales'],
@@ -549,9 +549,11 @@ function getReports_(payload) {
   return { dashboard: getDashboard_(payload), shops: getShops_(payload), orders: orders, visits: filterRows_(getRows_('VISITS'), payload), payments: getRows_('PAYMENTS').filter(function(row) { return inDateRange_(row.paid_date, payload) && (!payload.salespersonId || orderIds[row.order_id]); }), kpis: getRows_('KPI_DEFINITIONS') };
 }
 
-function exportReportXlsx_(payload) {
+function exportReportXlsx_(payload, user) {
   const allowedTypes = ['sales', 'routes', 'kpi', 'debt'];
   const reportType = allowedTypes.indexOf(String(payload.reportType || 'sales')) >= 0 ? String(payload.reportType || 'sales') : 'sales';
+  const userRole = role_(user);
+  if ((userRole === 'accountant' || userRole === 'kế toán') && reportType !== 'debt') throw new Error('Tài khoản Kế toán chỉ được xuất báo cáo công nợ.');
   const name = 'Bao_cao_' + reportType + '_' + (payload.dateFrom || date_()) + '_' + (payload.dateTo || date_());
   const temp = SpreadsheetApp.create(name);
   try {
@@ -575,16 +577,49 @@ function exportReportXlsx_(payload) {
 }
 
 function getExportReportRows_(reportType, payload) {
-  if (reportType === 'routes') return reportRows_('routes', { visits: filterRows_(getRows_('VISITS'), payload) });
-  if (reportType === 'kpi') return reportRows_('kpi', { kpis: getRows_('KPI_DEFINITIONS') });
-  return reportRows_(reportType, { orders: filterRows_(getRows_('ORDERS'), payload) });
+  const users = indexBy_(getRows_('USERS'), 'user_id');
+  if (reportType === 'routes') return reportRows_('routes', { visits: filterRows_(getRows_('VISITS'), payload), users: users });
+  if (reportType === 'kpi') return kpiExportRows_(payload, users);
+  return reportRows_(reportType, { orders: filterRows_(getRows_('ORDERS'), payload), payments: getRows_('PAYMENTS'), users: users });
 }
 
 function reportRows_(type, report) {
-  if (type === 'routes') return toMatrix_(['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_url', 'notes'], report.visits);
-  if (type === 'kpi') return toMatrix_(['kpi_id', 'kpi_code', 'kpi_name', 'unit', 'calculation_type', 'active'], report.kpis);
-  if (type === 'debt') return toMatrix_(['order_id', 'shop_id', 'order_date', 'quantity_kg', 'total_amount', 'payment_status'], report.orders);
-  return toMatrix_(['order_id', 'shop_id', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status'], report.orders);
+  if (type === 'routes') return toMatrix_(['visit_id', 'shop_id', 'sales', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_url', 'notes'], addSalesNames_(report.visits, report.users));
+  if (type === 'debt') return toMatrix_(['order_id', 'shop_id', 'sales', 'salesperson_id', 'order_date', 'quantity_kg', 'total_amount', 'paid_amount', 'debt_amount', 'payment_status'], debtRows_(report.orders, report.payments, report.users));
+  return toMatrix_(['order_id', 'shop_id', 'sales', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status'], addSalesNames_(report.orders, report.users));
+}
+
+function addSalesNames_(rows, users) {
+  return rows.map(function(row) {
+    const salesUser = users[row.salesperson_id];
+    return Object.assign({}, row, { sales: salesUser ? salesUser.full_name : (row.salesperson_id || '') });
+  });
+}
+
+function debtRows_(orders, payments, users) {
+  const paidByOrder = payments.reduce(function(result, payment) {
+    if (payment.order_id) result[payment.order_id] = (result[payment.order_id] || 0) + (Number(payment.amount) || 0);
+    return result;
+  }, {});
+  return addSalesNames_(orders, users).map(function(order) {
+    const total = Number(order.total_amount) || 0;
+    const paid = Math.min(total, paidByOrder[order.order_id] || (order.payment_status === 'Đã thanh toán' ? total : 0));
+    return Object.assign({}, order, { paid_amount: paid, debt_amount: Math.max(0, total - paid) });
+  });
+}
+
+function kpiExportRows_(payload, users) {
+  const definitions = indexBy_(getRows_('KPI_DEFINITIONS'), 'kpi_id');
+  const targets = getRows_('KPI_TARGETS').filter(function(target) {
+    const ownerOk = !payload.salespersonId || target.user_id === payload.salespersonId;
+    const dateOk = (!payload.dateFrom || !target.end_date || String(target.end_date).slice(0, 10) >= payload.dateFrom) && (!payload.dateTo || !target.start_date || String(target.start_date).slice(0, 10) <= payload.dateTo);
+    return ownerOk && dateOk;
+  });
+  if (!targets.length) return toMatrix_(['kpi_id', 'kpi_code', 'kpi_name', 'sales', 'user_id', 'unit', 'data_source', 'calculation_type', 'period_type', 'start_date', 'end_date', 'target_value', 'active'], getRows_('KPI_DEFINITIONS').map(function(definition) { return Object.assign({}, definition, { sales: '' }); }));
+  return toMatrix_(['kpi_id', 'kpi_code', 'kpi_name', 'sales', 'user_id', 'unit', 'data_source', 'calculation_type', 'period_type', 'start_date', 'end_date', 'target_value', 'active'], targets.map(function(target) {
+    const definition = definitions[target.kpi_id] || {};
+    return Object.assign({}, definition, target, { sales: users[target.user_id] ? users[target.user_id].full_name : (target.user_id || '') });
+  }));
 }
 
 function listRows_(sheetName, payload) { return filterRows_(getRows_(sheetName), payload); }
