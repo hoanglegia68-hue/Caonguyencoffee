@@ -550,18 +550,25 @@ function getReports_(payload) {
 }
 
 function exportReportXlsx_(payload) {
-  const report = getReports_(payload);
-  const reportType = payload.reportType || 'sales';
+  const allowedTypes = ['sales', 'routes', 'kpi', 'debt'];
+  const reportType = allowedTypes.indexOf(String(payload.reportType || 'sales')) >= 0 ? String(payload.reportType || 'sales') : 'sales';
   const name = 'Bao_cao_' + reportType + '_' + (payload.dateFrom || date_()) + '_' + (payload.dateTo || date_());
   const temp = SpreadsheetApp.create(name);
   const sheet = temp.getSheets()[0];
-  const rows = reportRows_(reportType, report);
+  const rows = getExportReportRows_(reportType, payload);
   if (rows.length) sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
   sheet.setFrozenRows(1);
+  SpreadsheetApp.flush();
   const blob = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + temp.getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob().setName(name + '.xlsx');
   const file = DriveApp.getFolderById(APP.driveRootFolderId).createFile(blob);
   DriveApp.getFileById(temp.getId()).setTrashed(true);
   return { downloadUrl: 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(file.getId()), fileUrl: file.getUrl(), fileId: file.getId(), fileName: file.getName() };
+}
+
+function getExportReportRows_(reportType, payload) {
+  if (reportType === 'routes') return reportRows_('routes', { visits: filterRows_(getRows_('VISITS'), payload) });
+  if (reportType === 'kpi') return reportRows_('kpi', { kpis: getRows_('KPI_DEFINITIONS') });
+  return reportRows_(reportType, { orders: filterRows_(getRows_('ORDERS'), payload) });
 }
 
 function reportRows_(type, report) {
