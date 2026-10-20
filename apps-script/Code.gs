@@ -16,7 +16,7 @@ const APP = {
     VISITS: ['visit_id', 'shop_id', 'salesperson_id', 'visit_date', 'latitude', 'longitude', 'captured_address', 'current_supplier', 'photo_file_id', 'photo_url', 'notes', 'created_at', 'checkin_latitude', 'checkin_longitude', 'distance_meters', 'checkin_verified'],
     ORDERS: ['order_id', 'shop_id', 'salesperson_id', 'order_date', 'product_type', 'quantity_kg', 'unit_price', 'total_amount', 'payment_status', 'notes', 'created_at'],
     PAYMENTS: ['payment_id', 'order_id', 'shop_id', 'accountant_id', 'paid_date', 'amount', 'payment_method', 'status', 'notes'],
-    KPI_DEFINITIONS: ['kpi_id', 'kpi_code', 'kpi_name', 'description', 'unit', 'data_source', 'calculation_type', 'active'],
+    KPI_DEFINITIONS: ['kpi_id', 'kpi_code', 'kpi_name', 'description', 'unit', 'data_source', 'calculation_type', 'active', 'start_date', 'end_date'],
     KPI_TARGETS: ['target_id', 'kpi_id', 'user_id', 'role', 'period_type', 'start_date', 'end_date', 'target_value'],
     KPI_RECORDS: ['record_id', 'kpi_id', 'user_id', 'shop_id', 'record_date', 'actual_value', 'source_id', 'notes'],
     CONFIG: ['config_key', 'config_value'],
@@ -194,9 +194,9 @@ function initializeSchema_() {
 
 function ensureSchema_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('SCHEMA_READY_V4') === '1') return;
+  if (cache.get('SCHEMA_READY_V5') === '1') return;
   initializeSchema_();
-  cache.put('SCHEMA_READY_V4', '1', 21600);
+  cache.put('SCHEMA_READY_V5', '1', 21600);
 }
 
 function getConfig_() {
@@ -494,6 +494,9 @@ function createKpi_(payload) {
   row.data_source = normalizeKpiSource_(row.data_source || 'VISITS');
   row.calculation_type = String(row.calculation_type || 'COUNT').trim().toUpperCase();
   row.active = row.active === false || row.active === 'false' ? false : true;
+  row.start_date = row.start_date || date_();
+  row.end_date = row.end_date || row.start_date;
+  if (String(row.start_date) > String(row.end_date)) throw new Error('Ngày bắt đầu áp dụng KPI không được sau ngày kết thúc.');
   appendRow_('KPI_DEFINITIONS', row);
   audit_('createKpi', row.kpi_id, row);
   return row;
@@ -505,6 +508,12 @@ function updateKpi_(payload) {
   if (row.data_source !== undefined) row.data_source = normalizeKpiSource_(row.data_source || 'VISITS');
   if (row.calculation_type !== undefined) row.calculation_type = String(row.calculation_type || 'COUNT').trim().toUpperCase();
   if (row.active !== undefined) row.active = row.active === false || row.active === 'false' ? false : true;
+  if (row.start_date !== undefined || row.end_date !== undefined) {
+    const current = getRows_('KPI_DEFINITIONS').filter(function(item) { return item.kpi_id === payload.kpi_id; })[0] || {};
+    row.start_date = row.start_date || current.start_date || date_();
+    row.end_date = row.end_date || current.end_date || row.start_date;
+    if (String(row.start_date) > String(row.end_date)) throw new Error('Ngày bắt đầu áp dụng KPI không được sau ngày kết thúc.');
+  }
   return updateRow_('KPI_DEFINITIONS', row, 'kpi_id');
 }
 
@@ -552,7 +561,7 @@ function exportReportXlsx_(payload) {
   const blob = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + temp.getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob().setName(name + '.xlsx');
   const file = DriveApp.getFolderById(APP.driveRootFolderId).createFile(blob);
   DriveApp.getFileById(temp.getId()).setTrashed(true);
-  return { downloadUrl: file.getUrl(), fileId: file.getId(), fileName: file.getName() };
+  return { downloadUrl: 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(file.getId()), fileUrl: file.getUrl(), fileId: file.getId(), fileName: file.getName() };
 }
 
 function reportRows_(type, report) {
@@ -591,10 +600,10 @@ function getKpiProgress_(payload) {
     const allDefinitionTargets = allTargets.filter(function(target) { return target.kpi_id === definition.kpi_id; });
     const displayTargets = definitionTargets.length ? definitionTargets : allDefinitionTargets;
     const targetValue = displayTargets.reduce(function(total, target) { return total + (Number(target.target_value) || 0); }, 0);
-    const target = displayTargets[0] || { kpi_id: definition.kpi_id, user_id: payload.salespersonId || '' };
+    const target = displayTargets[0] || { kpi_id: definition.kpi_id, user_id: payload.salespersonId || '', start_date: definition.start_date || payload.dateFrom || '', end_date: definition.end_date || payload.dateTo || '' };
     const actual = displayTargets.length ? displayTargets.reduce(function(total, targetRow) {
       return total + calculateKpiActualForTarget_(definition, targetRow, payload, orders, visits, records, shops);
-    }, 0) : calculateKpiActual_(definition, target, filterRows_(orders, payload), filterRows_(visits, payload), filterRows_(records, payload), filterRows_(shops, payload));
+    }, 0) : calculateKpiActualForTarget_(definition, target, payload, orders, visits, records, shops);
     return Object.assign({}, definition, {
       target_value: targetValue,
       actual_value: Math.round(actual * 100) / 100,
