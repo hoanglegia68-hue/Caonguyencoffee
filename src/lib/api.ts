@@ -86,6 +86,20 @@ export async function apiRequest<T = unknown>(action: string, payload: ApiPayloa
   return (result.data ?? result) as T
 }
 
+export function downloadBase64File(base64: string, fileName: string, mimeType: string) {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  const url = window.URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000)
+}
+
 export async function fileToCompressedDataUrl(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('Chỉ được tải tệp hình ảnh')
   if (file.size > 12 * 1024 * 1024) throw new Error('Ảnh không được lớn hơn 12 MB')

@@ -554,15 +554,24 @@ function exportReportXlsx_(payload) {
   const reportType = allowedTypes.indexOf(String(payload.reportType || 'sales')) >= 0 ? String(payload.reportType || 'sales') : 'sales';
   const name = 'Bao_cao_' + reportType + '_' + (payload.dateFrom || date_()) + '_' + (payload.dateTo || date_());
   const temp = SpreadsheetApp.create(name);
-  const sheet = temp.getSheets()[0];
-  const rows = getExportReportRows_(reportType, payload);
-  if (rows.length) sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
-  sheet.setFrozenRows(1);
-  SpreadsheetApp.flush();
-  const blob = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + temp.getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob().setName(name + '.xlsx');
-  const file = DriveApp.getFolderById(APP.driveRootFolderId).createFile(blob);
-  DriveApp.getFileById(temp.getId()).setTrashed(true);
-  return { downloadUrl: 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(file.getId()), fileUrl: file.getUrl(), fileId: file.getId(), fileName: file.getName() };
+  try {
+    const sheet = temp.getSheets()[0];
+    const rows = getExportReportRows_(reportType, payload);
+    if (rows.length) sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+    sheet.setFrozenRows(1);
+    SpreadsheetApp.flush();
+    const blob = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + temp.getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob().setName(name + '.xlsx');
+    const bytes = blob.getBytes();
+    if (bytes.length > 8 * 1024 * 1024) throw new Error('Báo cáo quá lớn để tải trực tiếp. Vui lòng thu hẹp khoảng thời gian hoặc bộ lọc.');
+    return {
+      fileName: blob.getName(),
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      base64: Utilities.base64Encode(bytes),
+    };
+  } finally {
+    // Chỉ dùng bảng tính tạm để Google chuyển đổi sang XLSX, không lưu báo cáo trong Drive.
+    DriveApp.getFileById(temp.getId()).setTrashed(true);
+  }
 }
 
 function getExportReportRows_(reportType, payload) {

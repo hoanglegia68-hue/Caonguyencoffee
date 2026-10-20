@@ -1,5 +1,5 @@
 import { Component, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
-import { apiRequest, AuthSession, clearStoredSession, fileToCompressedDataUrl, getStoredSession, loginWithPassword } from './lib/api'
+import { apiRequest, AuthSession, clearStoredSession, downloadBase64File, fileToCompressedDataUrl, getStoredSession, loginWithPassword } from './lib/api'
 
 type View = 'overview' | 'shops' | 'routes' | 'orders' | 'payments' | 'kpi' | 'reports'
 type IconName = 'grid' | 'store' | 'route' | 'cart' | 'wallet' | 'target' | 'file' | 'plus' | 'refresh' | 'search' | 'map' | 'camera' | 'calendar' | 'chevron' | 'download' | 'check' | 'menu' | 'close' | 'trend' | 'users' | 'settings'
@@ -712,10 +712,10 @@ function ReportsView({ dateFrom, dateTo, salesFilter, showToast }: { dateFrom: s
   const exportReport = async (reportType: string) => {
     setExporting(reportType)
     try {
-      const result = await apiRequest<{ downloadUrl?: string }>('exportReportXlsx', { reportType, dateFrom, dateTo, salespersonId: salesFilter === 'all' ? '' : salesFilter })
-      if (!result?.downloadUrl) throw new Error('Không nhận được liên kết tải file XLSX.')
-      window.open(result.downloadUrl, '_blank', 'noopener,noreferrer')
-      showToast('Đã tạo báo cáo XLSX')
+      const result = await apiRequest<{ fileName?: string; mimeType?: string; base64?: string }>('exportReportXlsx', { reportType, dateFrom, dateTo, salespersonId: salesFilter === 'all' ? '' : salesFilter })
+      if (!result?.base64) throw new Error('Không nhận được dữ liệu XLSX.')
+      downloadBase64File(result.base64, result.fileName || `Bao_cao_${reportType}.xlsx`, result.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      showToast('Đã tải báo cáo XLSX về máy')
     } catch (error) { showToast(error instanceof Error ? error.message : 'Không thể xuất báo cáo', 'error') } finally { setExporting('') }
   }
   return <><PageIntro eyebrow="PHÂN TÍCH" title="Báo cáo" description="Xuất báo cáo vận hành theo ngày, tuần hoặc tháng dưới định dạng XLSX." /><div className="report-filter-note"><Icon name="calendar" size={16} /> Kỳ đang chọn: <strong>{formatDate(dateFrom)}</strong> đến <strong>{formatDate(dateTo)}</strong><span>Thay đổi kỳ tại bộ lọc của menu Tổng quan.</span></div><div className="report-grid">{reportTypes.map((report) => <div className="report-card" key={report.id}><div className={`report-icon report-${report.id}`}><Icon name={report.icon} size={21} /></div><div className="report-copy"><strong>{report.title}</strong><span>{report.description}</span></div><button className="table-action report-download" onClick={() => void exportReport(report.id)} disabled={exporting === report.id}><Icon name="download" size={15} /> {exporting === report.id ? 'Đang tạo...' : 'Xuất XLSX'}</button></div>)}</div><div className="panel report-help"><div className="aside-illustration small"><Icon name="file" size={28} /></div><div><h3>Xuất báo cáo theo nhu cầu</h3><p>File XLSX được tạo từ dữ liệu Google Sheets trong kỳ lọc, không sử dụng dữ liệu bộ nhớ trình duyệt.</p></div></div></>
