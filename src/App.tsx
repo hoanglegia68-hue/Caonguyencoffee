@@ -779,7 +779,30 @@ function OrderModal({ shops, onClose, onSaved, showToast }: { shops: Shop[]; onC
     catch (error) { showToast(error instanceof Error ? error.message : 'Không thể tạo đơn', 'error') }
     finally { setSaving(false) }
   }
-  return <Modal eyebrow="BÁN HÀNG" title="Tạo đơn hàng" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="field wide"><span>Quán <b>*</b></span><select autoFocus value={form.shop_id} onChange={(event) => setForm({ ...form, shop_id: event.target.value })}><option value="">Chọn quán</option>{shops.map((shop) => <option key={shop.shop_id} value={shop.shop_id}>{shop.shop_name}</option>)}</select></label><div className="form-grid"><label className="field wide"><span>Loại cafe <b>*</b></span><select value={form.product_type} onChange={(event) => setForm({ ...form, product_type: event.target.value })}><option>Flamen pha máy</option><option>Flamen pha phin</option></select></label><label className="field"><span>Số lượng (Kg) <b>*</b></span><input type="number" inputMode="numeric" min="1" max="100000" step="1" value={form.quantity_kg} onChange={(event) => setForm({ ...form, quantity_kg: event.target.value.replace(/\D/g, '') })} placeholder="Ví dụ: 10" /></label><label className="field"><span>Đơn giá</span><input type="text" inputMode="decimal" value={form.unit_price} onChange={(event) => setForm({ ...form, unit_price: event.target.value })} placeholder="Nhập đơn giá" /></label><label className="field wide"><span>Tổng tiền dự kiến</span><div className="amount-preview">{formatCurrency(amount)} đ</div></label><label className="field wide"><span>Ghi chú</span><textarea rows={3} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu đơn hàng'}</button></div></form></Modal>
+  return <Modal eyebrow="BÁN HÀNG" title="Tạo đơn hàng" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="field wide"><span>Quán <b>*</b></span><ShopPicker shops={shops} value={form.shop_id} onChange={(shopId) => setForm({ ...form, shop_id: shopId })} /></label><div className="form-grid"><label className="field wide"><span>Loại cafe <b>*</b></span><select value={form.product_type} onChange={(event) => setForm({ ...form, product_type: event.target.value })}><option>Flamen pha máy</option><option>Flamen pha phin</option></select></label><label className="field"><span>Số lượng (Kg) <b>*</b></span><input type="number" inputMode="numeric" min="1" max="100000" step="1" value={form.quantity_kg} onChange={(event) => setForm({ ...form, quantity_kg: event.target.value.replace(/\D/g, '') })} placeholder="Ví dụ: 10" /></label><label className="field"><span>Đơn giá</span><input type="text" inputMode="decimal" value={form.unit_price} onChange={(event) => setForm({ ...form, unit_price: event.target.value })} placeholder="Nhập đơn giá" /></label><label className="field wide"><span>Tổng tiền dự kiến</span><div className="amount-preview">{formatCurrency(amount)} đ</div></label><label className="field wide"><span>Ghi chú</span><textarea rows={3} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Hủy</button><button className="primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu đơn hàng'}</button></div></form></Modal>
+}
+
+function ShopPicker({ shops, value, onChange }: { shops: Shop[]; value: string; onChange: (shopId: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const selectedShop = shops.find((shop) => shop.shop_id === value)
+  const filteredShops = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) return shops
+    return shops.filter((shop) => `${shop.shop_name || ''} ${shop.address || ''}`.toLowerCase().includes(normalizedQuery))
+  }, [shops, query])
+
+  useEffect(() => {
+    setQuery(selectedShop?.shop_name || '')
+  }, [selectedShop?.shop_name])
+
+  const selectShop = (shop: Shop) => {
+    setQuery(shop.shop_name)
+    onChange(shop.shop_id)
+    setOpen(false)
+  }
+
+  return <div className="shop-picker"><input autoFocus={!value} className="shop-picker-input" value={query} onFocus={() => setOpen(true)} onChange={(event) => { setQuery(event.target.value); if (value) onChange(''); setOpen(true) }} onBlur={() => window.setTimeout(() => setOpen(false), 150)} placeholder="Gõ tên quán hoặc địa chỉ để tìm..." autoComplete="off" /><span className="shop-picker-count">{filteredShops.length}/{shops.length} quán</span>{open && <div className="shop-picker-menu">{filteredShops.length ? filteredShops.map((shop) => <button type="button" className={`shop-picker-option ${shop.shop_id === value ? 'selected' : ''}`} key={shop.shop_id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectShop(shop)}><strong>{shop.shop_name}</strong><small>{shop.address || 'Chưa cập nhật địa chỉ'}</small></button>) : <div className="shop-picker-empty">Không tìm thấy quán phù hợp</div>}</div>}</div>
 }
 
 function KpiModal({ kpi, onClose, onSaved, showToast }: { kpi?: Kpi; onClose: () => void; onSaved: () => void; showToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {

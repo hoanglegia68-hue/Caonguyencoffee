@@ -212,7 +212,10 @@ function getUsers_(user) {
 }
 
 function getShops_(payload) {
-  const shops = filterRows_(getRows_('SHOPS'), payload);
+  // Danh sách quán không phụ thuộc kỳ báo cáo. Chỉ giới hạn theo Sales;
+  // doanh thu và lượt ghé của từng quán vẫn được tính theo kỳ lọc bên dưới.
+  const salesFilter = payload.salespersonId || payload.salesperson_id || '';
+  const shops = getRows_('SHOPS').filter(function(shop) { return !salesFilter || shop.salesperson_id === salesFilter; });
   const orders = getRows_('ORDERS');
   const visits = getRows_('VISITS');
   const users = indexBy_(getRows_('USERS'), 'user_id');
